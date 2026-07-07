@@ -1,0 +1,23 @@
+[project]
+name = "multi-agent-paper-reader-system-design"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "faiss-cpu>=1.14.3",
+    "fastapi>=0.139.0",
+    "numpy>=2.5.1",
+    "openai>=2.44.0",
+    "pydantic-settings>=2.14.2",
+    "pymupdf>=1.28.0",
+    "python-dotenv>=1.2.2",
+    "sqlmodel>=0.0.39",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+    "pytest>=9.1.1",
+    "ruff>=0.15.20",
+]
