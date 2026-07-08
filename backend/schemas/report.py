@@ -57,7 +57,7 @@ class ReportSection(BaseModel):
 
     if self.evidence_ids:
       evidence_text = ", ".join(self.evidence_ids)
-      markdown += f"\n**Evidence:** {evidence_text}"
+      markdown += f"\n**Evidence:** {evidence_text}\n"
 
     return markdown.strip()
   
