@@ -191,12 +191,19 @@ class ReaderInput(BaseModel):
   paper_metadata: PaperMetadata
   chunks: list[PaperChunk] = Field(default_factory=list)
   analysis_plan: AnalysisPlan
+  evidence_bundle:EvidenceBundle|None = None
 
   @model_validator(mode="after")
-  def validate_chunks(self) -> "ReaderInput":
-    if not self.chunks:
-      raise ValueError("ReaderInput requires at least one paper chunk")
+  def validate_context(self) -> "ReaderInput":
+    has_chunks = bool(self.chunks)
+    has_evidence = self.evidence_bundle is not None and bool(self.evidence_bundle.items)
+    if not has_chunks and not has_evidence:
+      raise ValueError("ReaderInput requires either chunks or evidence_bundle.")
     return self
+  # def validate_chunks(self) -> "ReaderInput":
+  #   if not self.chunks:
+  #     raise ValueError("ReaderInput requires at least one paper chunk")
+  #   return self
   
 
 

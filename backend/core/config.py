@@ -18,7 +18,7 @@ class AppSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file="backend/.env",
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -47,12 +47,12 @@ class AppSettings(BaseSettings):
 
     # Paths
     project_root: Path = Field(default_factory=lambda: Path.cwd())
-    data_dir: Path = Path("data")
-    raw_data_dir: Path = Path("data/raw")
-    processed_data_dir: Path = Path("data/processed")
-    output_dir: Path = Path("outputs")
-    report_dir: Path = Path("outputs/reports")
-    log_dir: Path = Path("outputs/logs")
+    data_dir: Path = Path("backend/data")
+    raw_data_dir: Path = Path("backend/data/raw")
+    processed_data_dir: Path = Path("backend/data/processed")
+    output_dir: Path = Path("backend/outputs")
+    report_dir: Path = Path("backend/outputs/reports")
+    log_dir: Path = Path("backend/outputs/logs")
 
     # Runtime config
     default_top_k: int = Field(default=5, ge=1, le=50)
