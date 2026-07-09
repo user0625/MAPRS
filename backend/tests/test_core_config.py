@@ -23,4 +23,4 @@ def test_use_mock_llm_property():
     settings = AppSettings(llm_provider="mock")
 
     assert settings.use_mock_llm is True
-    assert settings.use_openai_llm is False
+    assert settings.use_real_llm is False
