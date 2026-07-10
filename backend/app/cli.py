@@ -12,6 +12,7 @@ from backend.core.config import get_settings
 from backend.core.orchestrator import create_default_orchestrator
 from backend.core.state import AnalysisStatus
 from backend.schemas.paper import PaperInput
+from backend.exporters.report_exporter import ReportExporter
 
 app = typer.Typer(
   name="paper-agent",
@@ -52,7 +53,12 @@ def analyze(
     "--verbose",
     "-v",
     help="Print detailed workflow steps.",
-  ),) -> None:
+  ),
+  state_json: Path|None = typer.Option(
+    None,
+    "--state-json",
+    help="Optional path to save full analysis state as JSON."
+  )) -> None:
   """
     Analyze a paper PDF and generate a Markdown reading report.
   """
@@ -98,10 +104,12 @@ def analyze(
 
   # If your WriterAgent currently hardcodes output_language="zh" inside orchestrator,
   # language will not take effect yet. See section 6 below for how to pass it through.
-  markdown = state.final_report.to_markdown()
+  # markdown = state.final_report.to_markdown()
 
-  output.parent.mkdir(parents=True, exist_ok=True)
-  output.write_text(markdown, encoding="utf-8")
+  # output.parent.mkdir(parents=True, exist_ok=True)
+  # output.write_text(markdown, encoding="utf-8")
+  exporter = ReportExporter()
+  save_paths = exporter.save_all(state=state, report_md_path=output, state_json_path=state_json)
 
   console.print(
     Panel.fit(
