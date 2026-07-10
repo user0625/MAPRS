@@ -22,5 +22,9 @@
       - 当前执行阶段
       - 错误信息
       - 时间戳
+  
+  orchestrator.py:
+    - 把 PDFLoader, chunker, retriever, planner, reader, critic, writer串成一条完整流程
+    - 输入一篇PDF -> 自动生成Final Report对象
 
 """

@@ -47,7 +47,7 @@ class PaperRetriever:
       self.vector_store.clear()
       self.vector_store.add(records)
     except (EmbeddingError, VectorStoreError) as exc:
-      raise RetrieverError("Failed to build retriever index") from exc
+      raise RetrieverError("Failed to build retriever index: {exc}") from exc
     
     self._is_built=True
   

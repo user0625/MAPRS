@@ -162,8 +162,8 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
 
     it can be used with openai, qwen-compatible apis, or other compatible services as long as they support the embedding endpoint.
   """
-
-  def __init__(self, api_key:str, model_name:str, base_url:str|None=None, batch_size:int=16) -> None:
+  #text-embedding-v4 每次最多接受 10 条输入。
+  def __init__(self, api_key:str, model_name:str, base_url:str|None=None, batch_size:int=8) -> None:
     if not api_key.strip():
       raise ValueError("api_key cannot be empty")
     
@@ -183,7 +183,7 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
     self.client = OpenAI(api_key=api_key, base_url=base_url)
   
   def embed_text(self, text:str) -> list[float]:
-    vectors = self.embed_texts(text)
+    vectors = self.embed_texts([text])
     return vectors[0]
   
   def embed_texts(self, texts:list[str]) -> list[list[float]]:

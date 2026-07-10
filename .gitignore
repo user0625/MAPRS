@@ -4,6 +4,7 @@ __pycache__/
 build/
 dist/
 test/
+backend/.env
 wheels/
 *.egg-info
 data_flow_processing_pipeline.png
