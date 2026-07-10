@@ -108,35 +108,50 @@ class PlannerAgent(BaseAgent):
     )
 
   def _build_system_prompt(self) -> str:
-    return (
-      "You are a scientific paper analysis planner. "
-      "Your job is to create a structured analysis plan for a multi-agent paper reading system. "
-      "You must produce concise, accurate, and executable planning outputs."
-    )
+    return self.prompt_loader.render("planner_system.md")
+    # return (
+    #   "You are a scientific paper analysis planner. "
+    #   "Your job is to create a structured analysis plan for a multi-agent paper reading system. "
+    #   "You must produce concise, accurate, and executable planning outputs."
+    # )
 
   def _build_prompt(self, agent_input: PlannerInput) -> str:
     metadata = agent_input.paper_metadata
-
     schema_instruction = self.build_schema_instruction(AnalysisPlan)
 
-    return f"""
-Please create a structured analysis plan for the following paper.
+    return self.prompt_loader.render(
+      "planner_user.md",
+      title=metadata.title or "Unknown",
+      authors=", ".join(metadata.authors) if metadata.authors else "Unknown",
+      year=metadata.year or "Unknown",
+      venue=metadata.venue or "Unknown",
+      abstract=metadata.abstract or "Unknown",
+      user_query=agent_input.user_query,
+      schema_instruction=schema_instruction,
+    )
+#   def _build_prompt(self, agent_input: PlannerInput) -> str:
+#     metadata = agent_input.paper_metadata
 
-Paper metadata:
-- Title: {metadata.title or "Unknown"}
-- Authors: {", ".join(metadata.authors) if metadata.authors else "Unknown"}
-- Year: {metadata.year or "Unknown"}
-- Venue: {metadata.venue or "Unknown"}
-- Abstract: {metadata.abstract or "Unknown"}
+#     schema_instruction = self.build_schema_instruction(AnalysisPlan)
 
-User query:
-{agent_input.user_query}
+#     return f"""
+# Please create a structured analysis plan for the following paper.
 
-The plan should include:
-1. A list of analysis tasks.
-2. Focus questions that guide retrieval and reading.
-3. Required paper sections to inspect.
-4. Whether retrieval is needed.
+# Paper metadata:
+# - Title: {metadata.title or "Unknown"}
+# - Authors: {", ".join(metadata.authors) if metadata.authors else "Unknown"}
+# - Year: {metadata.year or "Unknown"}
+# - Venue: {metadata.venue or "Unknown"}
+# - Abstract: {metadata.abstract or "Unknown"}
 
-{schema_instruction}
-""".strip()
+# User query:
+# {agent_input.user_query}
+
+# The plan should include:
+# 1. A list of analysis tasks.
+# 2. Focus questions that guide retrieval and reading.
+# 3. Required paper sections to inspect.
+# 4. Whether retrieval is needed.
+
+# {schema_instruction}
+# """.strip()

@@ -72,51 +72,71 @@ class CriticAgent(BaseAgent):
     )
 
   def _build_system_prompt(self) -> str:
-    return (
-      "You are a rigorous scientific paper critic and reviewer. "
-      "Your job is to analyze a paper's strengths, limitations, missing experiments, "
-      "novelty, reliability, and reproducibility risks. "
-      "Be critical but fair. Do not invent unsupported weaknesses. "
-      "Base your critique only on the provided reader notes and evidence."
-    )
+    return self.prompt_loader.render("critic_system.md")
+    # return (
+    #   "You are a rigorous scientific paper critic and reviewer. "
+    #   "Your job is to analyze a paper's strengths, limitations, missing experiments, "
+    #   "novelty, reliability, and reproducibility risks. "
+    #   "Be critical but fair. Do not invent unsupported weaknesses. "
+    #   "Base your critique only on the provided reader notes and evidence."
+    # )
+
 
   def _build_prompt(self, agent_input: CriticInput) -> str:
     metadata = agent_input.paper_metadata
-    reader_notes = agent_input.reader_notes
 
-    reader_context = self._format_reader_notes(reader_notes)
+    reader_context = self._format_reader_notes(agent_input.reader_notes)
     evidence_context = self._format_evidence_context(agent_input.evidence_bundle)
-
     schema_instruction = self.build_schema_instruction(CriticNotes)
 
-    return f"""
-Please critically analyze the following paper based on the provided reader notes and evidence.
+    return self.prompt_loader.render(
+      "critic_user.md",
+      title=metadata.title or "Unknown",
+      authors=", ".join(metadata.authors) if metadata.authors else "Unknown",
+      year=metadata.year or "Unknown",
+      venue=metadata.venue or "Unknown",
+      abstract=metadata.abstract or "Unknown",
+      reader_notes=reader_context,
+      evidence_context=evidence_context,
+      schema_instruction=schema_instruction,
+    )
+#   def _build_prompt(self, agent_input: CriticInput) -> str:
+#     metadata = agent_input.paper_metadata
+#     reader_notes = agent_input.reader_notes
 
-Paper metadata:
-- Title: {metadata.title or "Unknown"}
-- Authors: {", ".join(metadata.authors) if metadata.authors else "Unknown"}
-- Year: {metadata.year or "Unknown"}
-- Venue: {metadata.venue or "Unknown"}
-- Abstract: {metadata.abstract or "Unknown"}
+#     reader_context = self._format_reader_notes(reader_notes)
+#     evidence_context = self._format_evidence_context(agent_input.evidence_bundle)
 
-Reader notes:
-{reader_context}
+#     schema_instruction = self.build_schema_instruction(CriticNotes)
 
-Retrieved evidence:
-{evidence_context}
+#     return f"""
+# Please critically analyze the following paper based on the provided reader notes and evidence.
 
-Critique requirements:
-1. Identify the paper's main strengths.
-2. Identify limitations and potential weaknesses.
-3. Point out missing experiments, baselines, ablation studies, or evaluation details.
-4. Assess novelty carefully and avoid overstating claims.
-5. Assess reliability based on experimental and methodological evidence.
-6. Identify reproducibility concerns.
-7. Use evidence_ids only when the evidence is directly relevant.
-8. Do not invent details that are not supported by the provided notes or evidence.
+# Paper metadata:
+# - Title: {metadata.title or "Unknown"}
+# - Authors: {", ".join(metadata.authors) if metadata.authors else "Unknown"}
+# - Year: {metadata.year or "Unknown"}
+# - Venue: {metadata.venue or "Unknown"}
+# - Abstract: {metadata.abstract or "Unknown"}
 
-{schema_instruction}
-""".strip()
+# Reader notes:
+# {reader_context}
+
+# Retrieved evidence:
+# {evidence_context}
+
+# Critique requirements:
+# 1. Identify the paper's main strengths.
+# 2. Identify limitations and potential weaknesses.
+# 3. Point out missing experiments, baselines, ablation studies, or evaluation details.
+# 4. Assess novelty carefully and avoid overstating claims.
+# 5. Assess reliability based on experimental and methodological evidence.
+# 6. Identify reproducibility concerns.
+# 7. Use evidence_ids only when the evidence is directly relevant.
+# 8. Do not invent details that are not supported by the provided notes or evidence.
+
+# {schema_instruction}
+# """.strip()
 
   def _format_reader_notes(self, reader_notes: ReaderNotes) -> str:
     contributions = "\n".join(

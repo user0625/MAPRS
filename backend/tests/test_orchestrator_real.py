@@ -19,7 +19,10 @@ from backend.schemas.paper import PaperInput
 )
 def test_real_orchestrator_smoke():
     settings = get_settings()
+    assert settings.use_real_llm, "Real LLM test requires LLM_PROVIDER=openai_compatible."
+
     orchestrator = create_default_orchestrator(settings)
+    assert orchestrator.planner_agent.llm_client.provider != "mock"
 
     paper_input = PaperInput(
         source_type="pdf",
@@ -29,8 +32,8 @@ def test_real_orchestrator_smoke():
 
     state = orchestrator.run(paper_input)
     if state.status == AnalysisStatus.FAILED:
-      print("Error:", state.error_message)   # 如果有该属性
-      print("Error detail:", getattr(state, 'error', 'No error field'))
+      print("Error:", state.error_message)
+      print("Steps:", state.step_history)
 
     assert state.status == AnalysisStatus.COMPLETED
     assert state.final_report is not None

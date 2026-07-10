@@ -23,7 +23,10 @@ from backend.schemas.report import FinalReport
 )
 def test_real_writer_agent_smoke():
     settings = get_settings()
+    assert settings.use_real_llm, "Real LLM test requires LLM_PROVIDER=openai_compatible."
+
     llm_client = create_llm_client(settings)
+    assert llm_client.provider != "mock"
 
     agent = WriterAgent(llm_client=llm_client)
 

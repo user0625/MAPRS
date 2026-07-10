@@ -203,12 +203,13 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
           input=batch
         )
       except Exception as exc:
-        raise EmbeddingError("failed to call embedding api") from exc
+        raise EmbeddingError(
+          f"failed to call embedding api: {type(exc).__name__}: {exc}"
+        ) from exc
       
       batch_vectors = [item.embedding for item in response.data]
       all_vectors.extend(batch_vectors)
     
     return all_vectors
-
 
 

@@ -68,7 +68,7 @@ class PaperAnalysisOrchestrator:
       task_id=self._generate_task_id(),
       paper_input=paper_input,
     )
-    state.metadata["output_langugae"] = output_language
+    state.metadata["output_language"] = output_language
 
     try:
       self._parse_pdf(state)

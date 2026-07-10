@@ -214,15 +214,16 @@ class WriterAgent(BaseAgent):
       if output_language == "zh"
       else "Write the final report in English."
     )
+    return self.prompt_loader.render("writer_system.md", language_instruction=language_instruction)
+    # return (
+    #   "You are a professional scientific writing assistant. "
+    #   "Your job is to generate a structured paper reading report based on "
+    #   "the provided planner, reader, critic, and evidence outputs. "
+    #   "Do not invent unsupported details. "
+    #   "Keep the report clear, faithful, and useful for research review. "
+    #   f"{language_instruction}"
+    # )
 
-    return (
-      "You are a professional scientific writing assistant. "
-      "Your job is to generate a structured paper reading report based on "
-      "the provided planner, reader, critic, and evidence outputs. "
-      "Do not invent unsupported details. "
-      "Keep the report clear, faithful, and useful for research review. "
-      f"{language_instruction}"
-    )
 
   def _build_prompt(self, agent_input: WriterInput) -> str:
     metadata = agent_input.paper_metadata
@@ -234,44 +235,68 @@ class WriterAgent(BaseAgent):
 
     schema_instruction = self.build_schema_instruction(FinalReport)
 
-    return f"""
-Please generate a structured final paper reading report.
+    return self.prompt_loader.render(
+      "writer_user.md",
+      title=metadata.title or "Unknown",
+      authors=", ".join(metadata.authors) if metadata.authors else "Unknown",
+      year=metadata.year or "Unknown",
+      venue=metadata.venue or "Unknown",
+      abstract=metadata.abstract or "Unknown",
+      output_language=agent_input.output_language,
+      analysis_plan=plan_context,
+      reader_notes=reader_context,
+      critic_notes=critic_context,
+      evidence_context=evidence_context,
+      schema_instruction=schema_instruction,
+    )
+#   def _build_prompt(self, agent_input: WriterInput) -> str:
+#     metadata = agent_input.paper_metadata
 
-Paper metadata:
-- Title: {metadata.title or "Unknown"}
-- Authors: {", ".join(metadata.authors) if metadata.authors else "Unknown"}
-- Year: {metadata.year or "Unknown"}
-- Venue: {metadata.venue or "Unknown"}
-- Abstract: {metadata.abstract or "Unknown"}
+#     plan_context = self._format_analysis_plan(agent_input)
+#     reader_context = self._format_reader_notes(agent_input.reader_notes)
+#     critic_context = self._format_critic_notes(agent_input.critic_notes)
+#     evidence_context = self._format_evidence_context(agent_input.evidence_bundle)
 
-Output language:
-{agent_input.output_language}
+#     schema_instruction = self.build_schema_instruction(FinalReport)
 
-Analysis plan:
-{plan_context}
+#     return f"""
+# Please generate a structured final paper reading report.
 
-Reader notes:
-{reader_context}
+# Paper metadata:
+# - Title: {metadata.title or "Unknown"}
+# - Authors: {", ".join(metadata.authors) if metadata.authors else "Unknown"}
+# - Year: {metadata.year or "Unknown"}
+# - Venue: {metadata.venue or "Unknown"}
+# - Abstract: {metadata.abstract or "Unknown"}
 
-Critic notes:
-{critic_context}
+# Output language:
+# {agent_input.output_language}
 
-Retrieved evidence:
-{evidence_context}
+# Analysis plan:
+# {plan_context}
 
-Report requirements:
-1. Generate a structured paper reading report.
-2. Include basic information, TL;DR, problem statement, main contributions, method summary, experiments, strengths, limitations, reproducibility notes, and overall assessment.
-3. Use the reader notes for factual paper content.
-4. Use the critic notes for evaluation and critique.
-5. Use evidence IDs only when directly relevant.
-6. Do not invent unsupported technical details.
-7. The report should be useful for research review and future paper writing.
-8. Return a valid JSON object matching the FinalReport schema.
-9. The sections field must not be empty.
+# Reader notes:
+# {reader_context}
 
-{schema_instruction}
-""".strip()
+# Critic notes:
+# {critic_context}
+
+# Retrieved evidence:
+# {evidence_context}
+
+# Report requirements:
+# 1. Generate a structured paper reading report.
+# 2. Include basic information, TL;DR, problem statement, main contributions, method summary, experiments, strengths, limitations, reproducibility notes, and overall assessment.
+# 3. Use the reader notes for factual paper content.
+# 4. Use the critic notes for evaluation and critique.
+# 5. Use evidence IDs only when directly relevant.
+# 6. Do not invent unsupported technical details.
+# 7. The report should be useful for research review and future paper writing.
+# 8. Return a valid JSON object matching the FinalReport schema.
+# 9. The sections field must not be empty.
+
+# {schema_instruction}
+# """.strip()
 
   def _format_analysis_plan(self, agent_input: WriterInput) -> str:
     plan = agent_input.analysis_plan

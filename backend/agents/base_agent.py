@@ -5,6 +5,7 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from backend.llm.client import BaseLLMClient, LLMError
+from backend.llm.prompt_loader import PromptTemplateLoader
 
 class AgentError(Exception):
   """Raised when an agent fails."""
@@ -24,12 +25,13 @@ class BaseAgent(ABC):
     - use LLMClient instead of calling model APIs directly.
   """
 
-  def __init__(self, name: str, llm_client: BaseLLMClient, ) -> None:
+  def __init__(self, name: str, llm_client: BaseLLMClient, prompt_loader: PromptTemplateLoader|None = None ) -> None:
     if not name.strip():
       raise ValueError("agent name cannot be empty.")
 
     self.name = name.strip()
     self.llm_client = llm_client
+    self.prompt_loader = prompt_loader or PromptTemplateLoader()
 
   @abstractmethod
   def run(self, agent_input: InputT) -> OutputT:

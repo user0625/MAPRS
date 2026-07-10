@@ -38,7 +38,7 @@ class PaperRetriever:
 
     if not chunks:
       raise RetrieverError("cannot build retriever index from empty chunks.")
-    
+
     self._validate_unique_chunk_ids(chunks)
     self.chunk_map = {chunk.chunk_id: chunk for chunk in chunks}
 
@@ -47,7 +47,9 @@ class PaperRetriever:
       self.vector_store.clear()
       self.vector_store.add(records)
     except (EmbeddingError, VectorStoreError) as exc:
-      raise RetrieverError("Failed to build retriever index: {exc}") from exc
+      raise RetrieverError(
+        f"Failed to build retriever index: {type(exc).__name__}: {exc}"
+      ) from exc
     
     self._is_built=True
   
@@ -175,5 +177,3 @@ class PaperRetriever:
     chunk_ids = [chunk.chunk_id for chunk in chunks]
     if len(chunk_ids) != len(set(chunk_ids)):
       raise RetrieverError("Duplicate chunk_id found in chunk_ids")
-
-    

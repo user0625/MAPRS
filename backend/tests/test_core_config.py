@@ -4,7 +4,7 @@ from backend.core.config import AppSettings
 
 
 def test_app_settings_default_values():
-    settings = AppSettings()
+    settings = AppSettings(_env_file=None)
 
     assert settings.app_name == "Multi-Agent Paper Reader System"
     assert settings.llm_provider == "mock"

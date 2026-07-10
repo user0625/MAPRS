@@ -77,54 +77,81 @@ class ReaderAgent(BaseAgent):
     )
 
   def _build_system_prompt(self) -> str:
-    return (
-      "You are a careful scientific paper reader. "
-      "Your job is to faithfully extract and summarize the paper's content. "
-      "Do not criticize the paper. Do not invent facts. "
-      "Only summarize what can be supported by the provided paper text."
-    )
+    return self.prompt_loader.render("reader_system.md")
+    # return (
+    #   "You are a careful scientific paper reader. "
+    #   "Your job is to faithfully extract and summarize the paper's content. "
+    #   "Do not criticize the paper. Do not invent facts. "
+    #   "Only summarize what can be supported by the provided paper text."
+    # )
 
   def _build_prompt(self, agent_input: ReaderInput) -> str:
-      metadata = agent_input.paper_metadata
-      plan = agent_input.analysis_plan
+    metadata = agent_input.paper_metadata
+    plan = agent_input.analysis_plan
 
-      context = self._build_context(agent_input)
-      focus_questions = "\n".join(
-        f"- {question}" for question in plan.focus_questions
-      )
+    context = self._build_context(agent_input)
 
-      tasks = "\n".join(
-        f"- {task.name}: {task.description}" for task in plan.tasks
-      )
-      schema_instruction = self.build_schema_instruction(ReaderNotes)
-      return f"""
-Please read the following paper content and extract structured reader notes.
+    focus_questions = "\n".join(
+      f"- {question}" for question in plan.focus_questions) or "No explicit focus questions provided."
 
-Paper metadata:
-- Title: {metadata.title or "Unknown"}
-- Authors: {", ".join(metadata.authors) if metadata.authors else "Unknown"}
-- Year: {metadata.year or "Unknown"}
-- Venue: {metadata.venue or "Unknown"}
-- Abstract: {metadata.abstract or "Unknown"}
+    tasks = "\n".join(
+      f"- {task.name}: {task.description}" for task in plan.tasks) or "No explicit tasks provided."
 
-Analysis tasks:
-{tasks or "No explicit tasks provided."}
+    schema_instruction = self.build_schema_instruction(ReaderNotes)
 
-Focus questions:
-{focus_questions or "No explicit focus questions provided."}
+    return self.prompt_loader.render(
+      "reader_user.md",
+      title=metadata.title or "Unknown",
+      authors=", ".join(metadata.authors) if metadata.authors else "Unknown",
+      year=metadata.year or "Unknown",
+      venue=metadata.venue or "Unknown",
+      abstract=metadata.abstract or "Unknown",
+      tasks=tasks,
+      focus_questions=focus_questions,
+      context=context,
+      schema_instruction=schema_instruction,
+    )
+#   def _build_prompt(self, agent_input: ReaderInput) -> str:
+#       metadata = agent_input.paper_metadata
+#       plan = agent_input.analysis_plan
 
-Paper context:
-{context}
+#       context = self._build_context(agent_input)
+#       focus_questions = "\n".join(
+#         f"- {question}" for question in plan.focus_questions
+#       )
 
-Instructions:
-1. Faithfully summarize the paper content.
-2. Extract the research problem, background, main contributions, method, experiments, and conclusion.
-3. Do not criticize the paper in this step.
-4. Do not mention information that is not supported by the provided context.
-5. If evidence IDs are provided, include the most relevant ones in important_evidence_ids.
+#       tasks = "\n".join(
+#         f"- {task.name}: {task.description}" for task in plan.tasks
+#       )
+#       schema_instruction = self.build_schema_instruction(ReaderNotes)
+#       return f"""
+# Please read the following paper content and extract structured reader notes.
 
-{schema_instruction}
-""".strip()
+# Paper metadata:
+# - Title: {metadata.title or "Unknown"}
+# - Authors: {", ".join(metadata.authors) if metadata.authors else "Unknown"}
+# - Year: {metadata.year or "Unknown"}
+# - Venue: {metadata.venue or "Unknown"}
+# - Abstract: {metadata.abstract or "Unknown"}
+
+# Analysis tasks:
+# {tasks or "No explicit tasks provided."}
+
+# Focus questions:
+# {focus_questions or "No explicit focus questions provided."}
+
+# Paper context:
+# {context}
+
+# Instructions:
+# 1. Faithfully summarize the paper content.
+# 2. Extract the research problem, background, main contributions, method, experiments, and conclusion.
+# 3. Do not criticize the paper in this step.
+# 4. Do not mention information that is not supported by the provided context.
+# 5. If evidence IDs are provided, include the most relevant ones in important_evidence_ids.
+
+# {schema_instruction}
+# """.strip()
 
   def _build_context(self, agent_input: ReaderInput) -> str:
     """

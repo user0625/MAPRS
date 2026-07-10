@@ -12,7 +12,10 @@ from backend.llm.client import LLMMessage, create_llm_client
 )
 def test_real_llm_client_smoke():
     settings = get_settings()
+    assert settings.use_real_llm, "Real LLM test requires LLM_PROVIDER=openai_compatible."
+
     client = create_llm_client(settings)
+    assert client.provider != "mock"
 
     response = client.generate(
         messages=[

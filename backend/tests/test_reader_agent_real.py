@@ -15,7 +15,10 @@ from backend.schemas.paper import PaperChunk, PaperMetadata
 )
 def test_real_reader_agent_smoke():
     settings = get_settings()
+    assert settings.use_real_llm, "Real LLM test requires LLM_PROVIDER=openai_compatible."
+
     llm_client = create_llm_client(settings)
+    assert llm_client.provider != "mock"
 
     agent = ReaderAgent(llm_client=llm_client)
 
