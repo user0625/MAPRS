@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Literal
 import uuid
 
 from backend.agents.critic_agent import CriticAgent
@@ -48,7 +49,7 @@ class PaperAnalysisOrchestrator:
     self.critic_agent = critic_agent
     self.writer_agent = writer_agent
 
-  def run(self, paper_input: PaperInput) -> AnalysisState:
+  def run(self, paper_input: PaperInput, output_language: Literal["zh", "en"]="zh") -> AnalysisState:
     """
       Run the full analysis workflow.
 
@@ -67,6 +68,7 @@ class PaperAnalysisOrchestrator:
       task_id=self._generate_task_id(),
       paper_input=paper_input,
     )
+    state.metadata["output_langugae"] = output_language
 
     try:
       self._parse_pdf(state)
@@ -289,13 +291,14 @@ class PaperAnalysisOrchestrator:
     if state.critic_notes is None:
       raise OrchestratorError("Cannot run WriterAgent before CriticAgent.")
 
+    output_language = state.metadata.get("output_language", "zh")
     writer_input = WriterInput(
       paper_metadata=state.document.metadata,
       analysis_plan=state.analysis_plan,
       reader_notes=state.reader_notes,
       critic_notes=state.critic_notes,
       evidence_bundle=state.evidence_bundle,
-      output_language="zh",
+      output_language=output_language,
     )
 
     final_report = self.writer_agent.run(writer_input)
