@@ -6,9 +6,10 @@ from abc import ABC, abstractmethod
 
 from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ValidationError
 
 from backend.core.config import AppSettings
+from backend.llm.json_parser import JSONParseError, parse_json_object
 
 class LLMError(Exception):
 
@@ -108,46 +109,91 @@ class BaseLLMClient(ABC):
     )
     return self._parse_json_response(response.content)
 
-  def generate_pydantic(self, prompt: str, output_schema: type[T], system_prompt: str | None = None, temperature: float = 0.1, max_tokens: int | None = None,) -> T:
+  def generate_pydantic(self, prompt: str, output_schema: type[T], system_prompt: str | None = None, temperature: float = 0.1, max_tokens: int | None = None, max_retries:int=2) -> T:
     """
       Generate JSON and validate it against a Pydantic schema.
-    """
-    data = self.generate_json(
-      prompt=prompt,
-      system_prompt=system_prompt,
-      temperature=temperature,
-      max_tokens=max_tokens,
-    )
 
+      if parsing or validation fails, retry with error feedback.
+    """
+
+    current_prompt = prompt
+    last_error:Exception|None = None
+
+    for attempt in range(max_retries + 1):
+      try:
+        data = self.generate_json(
+        prompt=current_prompt,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        )
+
+        return output_schema.model_validate(data)
+      except (LLMError, ValidationError, ValueError) as exc:
+        last_error = exc
+        if attempt >= max_retries:
+          raise LLMError(
+            f"Failed to generate valid {output_schema.__name__}"
+            f"After {max_retries +1} attempts. last error: {exc}"
+          ) from exc
+        current_prompt = self._build_retry_prompt(original_prompt=prompt, output_schema=output_schema, error_message=str(exc))
+    raise LLMError(
+      f"Failed to generate valid {output_schema.__name__}"
+    ) from last_error
+      
+    
+  def _build_retry_prompt(self, original_prompt: str, output_schema: type[BaseModel], error_message: str,) -> str:
+    schema = output_schema.model_json_schema()
+
+    return f"""
+            The previous response failed JSON parsing or schema validation.
+
+            Validation error:
+            {error_message}
+
+            Please try again.
+
+            Important requirements:
+            1. Return only one valid JSON object.
+            2. Do not include Markdown code fences.
+            3. Do not include explanations outside JSON.
+            4. Do not omit required fields.
+            5. Do not use null unless the schema allows it.
+            6. The JSON object must match this schema:
+
+            {schema}
+
+            Original task:
+            {original_prompt}
+            """.strip() 
+
+  def _parse_json_response(self, content:str) -> dict[str, Any]:
     try:
-      return output_schema.model_validate(data)
-    except Exception as exc:
-      raise LLMError(
-          f"Failed to validate LLM output as {output_schema.__name__}."
-      ) from exc
+      return parse_json_object(content)
+    except JSONParseError as exc:
+      raise LLMError(f"Failed to parse LLM reponse as JSON: {content}") from exc
+  # def _parse_json_response(self, content: str) -> dict[str, Any]:
+  #   """
+  #     Parse JSON response.
 
-  def _parse_json_response(self, content: str) -> dict[str, Any]:
-    """
-      Parse JSON response.
+  #     This method handles simple cases where the model returns:
+  #     - pure JSON
+  #     - fenced ```json blocks
+  #   """
 
-      This method handles simple cases where the model returns:
-      - pure JSON
-      - fenced ```json blocks
-    """
+  #   cleaned = content.strip()
 
-    cleaned = content.strip()
+  #   if cleaned.startswith("```"):
+  #     cleaned = self._strip_code_fence(cleaned)
 
-    if cleaned.startswith("```"):
-      cleaned = self._strip_code_fence(cleaned)
+  #   try:
+  #     parsed = json.loads(cleaned)
+  #   except json.JSONDecodeError as exc:
+  #     raise LLMError(f"Failed to parse LLM response as JSON: {content}") from exc
+  #   if not isinstance(parsed, dict):
+  #     raise LLMError("Expected JSON object from LLM response.")
 
-    try:
-      parsed = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-      raise LLMError(f"Failed to parse LLM response as JSON: {content}") from exc
-    if not isinstance(parsed, dict):
-      raise LLMError("Expected JSON object from LLM response.")
-
-    return parsed
+  #   return parsed
 
   def _strip_code_fence(self, content: str) -> str:
     """

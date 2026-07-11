@@ -11,4 +11,6 @@
           ✅ 提供 JSON 输出解析能力
           ✅ 屏蔽 Qwen / DeepSeek / OpenAI 的调用差异
 
+  json_parser: 让模型即使偶尔输出不规范JSON也能自动提取、校验和重试。
+
 """

@@ -52,6 +52,7 @@ class BaseAgent(ABC):
     system_prompt: str | None = None,
     temperature: float = 0.1,
     max_tokens: int | None = None,
+    max_retries: int = 2,
   ) -> OutputT:
     """
       Generate a Pydantic output through LLMClient.
@@ -63,6 +64,7 @@ class BaseAgent(ABC):
         system_prompt=system_prompt,
         temperature=temperature,
         max_tokens=max_tokens,
+        max_retries=max_retries,
       )
     except LLMError as exc:
       raise AgentError(f"{self.name} failed to generate valid output.") from exc
@@ -75,7 +77,11 @@ class BaseAgent(ABC):
     """
     schema = output_schema.model_json_schema()
     return (
-      "You must return a valid JSON object that matches the following schema. "
-      "Do not include Markdown code fences. Do not include explanations outside JSON.\n\n"
+      "You must return only one valid JSON object.\n"
+      "Do not include Markdown code fences.\n"
+      "Do not include explanations before or after the JSON.\n"
+      "Do not use null unless the schema allows it.\n"
+      "Do not omit required fields.\n"
+      "The JSON object must match the following schema:\n\n"
       f"{schema}"
     )
