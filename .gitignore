@@ -5,6 +5,15 @@ build/
 dist/
 test/
 backend/.env
+backend/data/*
+!backend/data/raw/
+backend/data/raw/*
+!backend/data/raw/example.pdf
+backend/outputs/*
+!backend/outputs/reports/
+backend/outputs/reports/*
+!backend/outputs/reports/example_report.md
+backend/logs/
 wheels/
 *.egg-info
 data_flow_processing_pipeline.png

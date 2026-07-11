@@ -15,16 +15,19 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读的多智能体
 - 使用 embedding、内存向量库和相似度检索构建轻量 RAG 流程。
 - 通过 Planner、Reader、Critic、Writer 四个 Agent 分工完成论文分析。
 - 使用 Pydantic 校验 Agent 的结构化 JSON 输出。
+- 从 `prompts/` 中加载可独立迭代的 Markdown Prompt 模板。
+- 宽容提取被代码块或解释文字包裹、含尾随逗号的 JSON，并在 Schema 校验失败时把错误反馈给模型自动重试。
 - 支持完全离线、可重复的 mock 模式。
 - 支持 OpenAI-compatible LLM 和 embedding API，例如阿里云百炼 Qwen。
 - 通过 CLI 输出中文或英文 Markdown 报告，并可选保存完整运行状态 JSON。
+- 提供 FastAPI 同步上传分析和进程内后台任务 API，以及健康检查、任务状态、报告查询和 Swagger/ReDoc 文档。
 - 提供单元测试、组件集成测试和显式启用的真实模型 smoke tests。
 
 ## 3. System Architecture
 
 ```mermaid
 flowchart TD
-    CLI[Typer CLI] --> ORCH[PaperAnalysisOrchestrator]
+    ENTRY[Typer CLI / FastAPI] --> ORCH[PaperAnalysisOrchestrator]
     ORCH --> PDF[PDF Loader]
     PDF --> CHUNK[Document Chunker]
     CHUNK --> PLAN[Planner Agent]
@@ -39,6 +42,10 @@ flowchart TD
     LLM --> READ
     LLM --> CRITIC
     LLM --> WRITER
+    PROMPT[Markdown Prompt Templates] --> PLAN
+    PROMPT --> READ
+    PROMPT --> CRITIC
+    PROMPT --> WRITER
 ```
 
 核心模块之间通过 Schema 传递数据：`PaperDocument` 保存解析后的论文，`AnalysisPlan` 定义任务计划，`EvidenceBundle` 保存检索证据，`ReaderNotes` 和 `CriticNotes` 保存中间分析，`FinalReport` 表示最终报告。
@@ -53,7 +60,7 @@ flowchart TD
 6. `ReaderAgent` 基于证据忠实提取研究问题、贡献、方法和实验信息。
 7. `CriticAgent` 分析优点、局限、缺失实验、可靠性和可复现性。
 8. `WriterAgent` 汇总上述结果，生成中文或英文结构化报告。
-9. `ReportExporter` 保存 Markdown，并可选保存完整 `AnalysisState` JSON。
+9. `ReportExporter` 保存 Markdown，并可选保存完整 `AnalysisState` JSON；API 可同步返回结果，或在后台任务中更新 SQLite 任务状态供轮询。
 
 当前 Orchestrator 按上述顺序串行执行，各步骤状态会记录在 `step_history` 中。
 
@@ -64,6 +71,7 @@ flowchart TD
 - PyMuPDF：PDF 文本提取
 - NumPy：内存向量存储与余弦相似度检索
 - OpenAI Python SDK：OpenAI-compatible 模型接口
+- FastAPI / Uvicorn：HTTP API 与开发服务器
 - Typer / Rich：命令行入口与运行状态展示
 - pytest：单元测试、集成测试和真实模型 smoke tests
 - uv：依赖和虚拟环境管理
@@ -73,6 +81,7 @@ flowchart TD
 ```text
 backend/
 ├── agents/                 # BaseAgent、Planner、Reader、Critic、Writer
+├── api/                    # FastAPI 应用、同步分析与后台任务路由
 ├── app/
 │   ├── cli.py              # 当前可用的命令行入口
 │   └── streamlit_app.py    # 预留的 Web UI 入口，尚未实现
@@ -82,11 +91,14 @@ backend/
 │   └── state.py            # 工作流状态与步骤记录
 ├── exporters/              # Markdown 和 JSON 导出
 ├── llm/                    # Mock 与 OpenAI-compatible LLM Client
+├── prompts/                # 可外置迭代的 Markdown Prompt 模板
 ├── schemas/                # 论文、Agent I/O、报告数据模型
 ├── tools/                  # PDF、分块、embedding、检索、向量存储
 ├── tests/                  # 单元、集成和真实 API 测试
 ├── data/raw/               # 示例与本地输入 PDF
 ├── outputs/reports/        # 生成的阅读报告
+├── outputs/uploads/        # API 上传文件（运行时生成）
+├── outputs/logs/           # API/CLI 状态 JSON（运行时生成）
 ├── .env.example            # 安全的环境变量模板
 └── README.md
 ```
@@ -153,6 +165,7 @@ LLM 与 embedding 可以独立配置。例如使用 DeepSeek LLM 时，可以继
 | `DEFAULT_TOP_K` | `5` | 默认检索结果数量 |
 | `CHUNK_SIZE` | `1200` | 单个文本分块的目标字符数 |
 | `CHUNK_OVERLAP` | `150` | 相邻分块的重叠字符数 |
+| `DATABASE_URL` | `sqlite:///backend/data/tasks.db` | 任务历史 SQLite 数据库 |
 | `RUN_REAL_LLM_TESTS` | `0` | 是否执行真实 API 测试；仅值为 `1` 时启用 |
 
 ## 9. Usage
@@ -190,6 +203,43 @@ CLI 参数：
 
 真实模型模式使用相同命令，只需先在 `backend/.env` 中配置有效 API。真实调用依赖网络、服务配额和模型可用性，并可能产生费用。
 
+### FastAPI
+
+启动开发服务器：
+
+```bash
+uv run uvicorn backend.api.main:app --reload
+```
+
+健康检查与交互式文档分别位于 `GET /api/health`、<http://127.0.0.1:8000/docs> 和 <http://127.0.0.1:8000/redoc>。同步上传会等待完整分析完成：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/analyze/upload \
+  -F 'file=@backend/data/raw/example.pdf;type=application/pdf' \
+  -F 'query=分析这篇论文' -F 'language=zh'
+```
+
+后台任务接口会立即返回 `task_id`，随后可轮询状态并读取完成后的报告：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/tasks/analyze \
+  -F 'file=@backend/data/raw/example.pdf;type=application/pdf' \
+  -F 'language=zh'
+curl http://127.0.0.1:8000/api/tasks/{task_id}
+curl http://127.0.0.1:8000/api/tasks/{task_id}/report
+```
+
+任务历史和安全详情接口：
+
+```bash
+curl 'http://127.0.0.1:8000/api/tasks?limit=20&offset=0'
+curl http://127.0.0.1:8000/api/tasks/{task_id}/detail
+```
+
+详情可返回论文标题、作者、工作流步骤摘要和可用的 Markdown 报告；不会返回论文全文分块、Agent 原始中间内容、模型原始响应或 API Key。
+
+上传文件写入 `OUTPUT_DIR/uploads`，报告和状态分别写入 `REPORT_DIR`、`LOG_DIR`；相对路径以 `PROJECT_ROOT` 为基准。
+
 ## 10. Testing
 
 运行默认测试套件：
@@ -219,7 +269,7 @@ RUN_REAL_LLM_TESTS=1 uv run pytest backend/tests/test_orchestrator_real.py -v -s
 
 ## 11. Example Output
 
-仓库提供了一份[示例论文阅读报告](outputs/reports/example_report.md)。最终报告通常包含：
+仓库可提供一份[示例论文阅读报告](outputs/reports/example_report.md)。示例 PDF 与报告仅应在确认版权、隐私和再分发许可后加入公开仓库。最终报告通常包含：
 
 - 基本信息与 TL;DR
 - 研究问题与背景
@@ -242,8 +292,11 @@ RUN_REAL_LLM_TESTS=1 uv run pytest backend/tests/test_orchestrator_real.py -v -s
 - 使用 FAISS、Qdrant、Milvus 等持久化或可扩展向量存储。
 - 增加证据去重、引用校验和检索质量评估。
 - 将独立任务并行化，并支持可恢复的任务图执行。
-- 提供 FastAPI 服务、Streamlit/Web UI 和异步任务状态查询。
-- 增加模型重试、超时、限流、缓存、成本统计和可观测性。
+- 提供 Streamlit 或其他前端 UI。
+- 使用 Redis/数据库持久化任务状态，并采用 Celery/RQ 等可靠任务队列。
+- 使用 WebSocket/SSE 推送任务进度。
+- 增加认证、上传与调用限流以及生产部署方案。
+- 增加网络超时重试、缓存、成本统计和可观测性。
 - 支持更多模型厂商、本地模型和 vendor-specific structured output。
 - 增加批量论文、跨论文比较和文献综述能力。
 
@@ -255,7 +308,10 @@ RUN_REAL_LLM_TESTS=1 uv run pytest backend/tests/test_orchestrator_real.py -v -s
 - Orchestrator 当前串行执行，尚未实现真正的并行多 Agent 调度。
 - `NumpyVectorStore` 仅保存在进程内，退出后索引不会持久化。
 - mock embedding 不具备语义检索能力，mock Agent 输出也不是论文真实分析。
-- 真实模型必须返回符合 Schema 的 JSON；模型输出偏差可能导致校验失败。
+- Prompt 模板可独立修改，但其中的模板变量必须与对应 Agent 的渲染参数匹配。
+- JSON 解析器可处理代码块、周边解释文字和尾随逗号；Schema 失败会把校验错误反馈给模型重试。该结构化重试只解决输出格式或 Schema 问题，不处理网络超时。
 - 长论文和大量检索证据可能受到模型上下文窗口限制。
 - 真实 API 调用可能遇到网络超时、鉴权失败、限流、模型不可用和调用费用。
-- 当前项目没有用户认证、权限控制、任务队列和生产部署保障。
+- 后台任务仍由 FastAPI `BackgroundTasks` 在 API 进程内执行；任务元数据持久化到 SQLite，但服务重启不会恢复工作流，遗留的 `pending/running` 任务会标记为中断失败。
+- 状态 JSON 和 Markdown 报告仍是独立文件。文件被移动或删除后历史元数据仍可查询，但详情中的步骤或报告内容不可用；系统不会自动导入旧运行产物。
+- 同步分析接口会阻塞到工作流完成；当前未限制上传大小，也没有认证、权限控制、限流和生产部署保障。

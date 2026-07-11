@@ -53,6 +53,7 @@ class AppSettings(BaseSettings):
     output_dir: Path = Path("backend/outputs")
     report_dir: Path = Path("backend/outputs/reports")
     log_dir: Path = Path("backend/outputs/logs")
+    database_url: str = "sqlite:///backend/data/tasks.db"
 
     # Runtime config
     default_top_k: int = Field(default=5, ge=1, le=50)
