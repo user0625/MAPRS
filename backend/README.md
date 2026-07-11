@@ -21,6 +21,9 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读的多智能体
 - 支持 OpenAI-compatible LLM 和 embedding API，例如阿里云百炼 Qwen。
 - 通过 CLI 输出中文或英文 Markdown 报告，并可选保存完整运行状态 JSON。
 - 提供 FastAPI 同步上传分析和进程内后台任务 API，以及健康检查、任务状态、报告查询和 Swagger/ReDoc 文档。
+- 为 LLM 与 embedding 提供统一超时、指数退避和有限总预算；仅重试连接错误、超时、429 与 5xx。
+- 严格校验 PDF 上传并支持活动任务去重、协作式取消、失败/取消后重试和文件保留期清理。
+- 记录 Prompt Set、模板哈希及结构化输出成功/重试/失败统计，不保存模型原始响应。
 - 提供单元测试、组件集成测试和显式启用的真实模型 smoke tests。
 
 ## 3. System Architecture
@@ -166,6 +169,13 @@ LLM 与 embedding 可以独立配置。例如使用 DeepSeek LLM 时，可以继
 | `CHUNK_SIZE` | `1200` | 单个文本分块的目标字符数 |
 | `CHUNK_OVERLAP` | `150` | 相邻分块的重叠字符数 |
 | `DATABASE_URL` | `sqlite:///backend/data/tasks.db` | 任务历史 SQLite 数据库 |
+| `REQUEST_CONNECT_TIMEOUT` / `REQUEST_READ_TIMEOUT` | `10` / `60` | 外部请求连接与读取超时（秒） |
+| `REQUEST_TOTAL_BUDGET` | `120` | 单次任务请求重试总预算（秒） |
+| `REQUEST_MAX_RETRIES` | `2` | 可重试请求的最大重试次数 |
+| `REQUEST_BACKOFF_BASE` / `REQUEST_BACKOFF_MAX` | `1` / `8` | 指数退避基数与上限（秒） |
+| `MAX_UPLOAD_BYTES` | `52428800` | 上传上限，默认 50 MiB |
+| `FILE_RETENTION_DAYS` | `30` | 终态任务产物保留天数 |
+| `PROMPT_SET_VERSION` | `v1` | Prompt 集版本标识 |
 | `RUN_REAL_LLM_TESTS` | `0` | 是否执行真实 API 测试；仅值为 `1` 时启用 |
 
 ## 9. Usage
@@ -227,6 +237,8 @@ curl -X POST http://127.0.0.1:8000/api/tasks/analyze \
   -F 'language=zh'
 curl http://127.0.0.1:8000/api/tasks/{task_id}
 curl http://127.0.0.1:8000/api/tasks/{task_id}/report
+curl -X POST http://127.0.0.1:8000/api/tasks/{task_id}/cancel
+curl -X POST http://127.0.0.1:8000/api/tasks/{task_id}/retry
 ```
 
 任务历史和安全详情接口：
@@ -237,6 +249,10 @@ curl http://127.0.0.1:8000/api/tasks/{task_id}/detail
 ```
 
 详情可返回论文标题、作者、工作流步骤摘要和可用的 Markdown 报告；不会返回论文全文分块、Agent 原始中间内容、模型原始响应或 API Key。
+
+后台上传接口只接受 `.pdf`、`application/pdf` 或 `application/octet-stream`，并校验 `%PDF-` 文件头和大小。相同 SHA-256、标准化 query 与 language 的活动任务会复用原 `task_id`。取消在工作流阶段边界生效；重试仅适用于 `failed/canceled`，并创建通过 `retry_of` 关联的新任务。
+
+每个 HTTP 响应都包含 `X-Request-ID`。错误响应包含兼容的 `detail` 以及 `code`、`request_id`。任务详情的 workflow metadata 会提供 Prompt 版本、模板哈希和结构化输出统计。
 
 上传文件写入 `OUTPUT_DIR/uploads`，报告和状态分别写入 `REPORT_DIR`、`LOG_DIR`；相对路径以 `PROJECT_ROOT` 为基准。
 
@@ -296,7 +312,7 @@ RUN_REAL_LLM_TESTS=1 uv run pytest backend/tests/test_orchestrator_real.py -v -s
 - 使用 Redis/数据库持久化任务状态，并采用 Celery/RQ 等可靠任务队列。
 - 使用 WebSocket/SSE 推送任务进度。
 - 增加认证、上传与调用限流以及生产部署方案。
-- 增加网络超时重试、缓存、成本统计和可观测性。
+- 增加请求缓存、token/成本指标和更完整的 Metrics/Tracing。
 - 支持更多模型厂商、本地模型和 vendor-specific structured output。
 - 增加批量论文、跨论文比较和文献综述能力。
 
@@ -304,14 +320,19 @@ RUN_REAL_LLM_TESTS=1 uv run pytest backend/tests/test_orchestrator_real.py -v -s
 
 - 当前端到端入口只支持本地文本型 PDF；`arxiv` 和 `url` 仅在 Schema 中预留。
 - 未集成 OCR，扫描版或复杂排版 PDF 的文本提取质量可能较差。
-- 标题、作者、摘要和章节元数据提取仍较基础，可能显示为 Unknown。
+- 标题、作者、摘要、DOI、arXiv、年份、关键词和章节使用 PDF metadata、首页版面与文本规则组合抽取，并记录来源和置信度；扫描件仍需 OCR。
+- 创建分析支持 `analysis_depth`、`target_audience`、`report_template` 与受限的 `custom_sections`。报告完成后可通过 `/api/tasks/{task_id}/artifacts/{format}` 按需导出 Markdown、JSON、HTML、PDF 或 DOCX。
+- Writer 后始终执行引用可追溯性与证据覆盖检查；未通过时清理无效引用并复核一次，仍不通过则交付带质量警告的报告。
+- `LLM_PROVIDER=openai_compatible` 时，标题、作者和 venue 默认由结构化 Metadata Extractor 对首页版面候选进行裁决，其他缺失或低置信字段由其补充。输入严格限制为首页文本块及字号/坐标/旋转方向、摘要候选和章节标题；模型结果必须通过离线候选一致性检查。真实 Verifier 检查报告与证据并产生五维评分、问题和修订指令，Writer 最多修订一次。state 只保存质量摘要，不保存 Verifier 原始响应。
+- 元数据裁决不是自由生成：标题、作者和 venue 至少 90% 的词必须回溯到首页候选；旋转 arXiv 标记、日期、机构、邮箱、摘要/章节标题及与标题高度重合的作者结果会被拒绝。模型失败时保留离线结果。
 - Orchestrator 当前串行执行，尚未实现真正的并行多 Agent 调度。
 - `NumpyVectorStore` 仅保存在进程内，退出后索引不会持久化。
 - mock embedding 不具备语义检索能力，mock Agent 输出也不是论文真实分析。
 - Prompt 模板可独立修改，但其中的模板变量必须与对应 Agent 的渲染参数匹配。
-- JSON 解析器可处理代码块、周边解释文字和尾随逗号；Schema 失败会把校验错误反馈给模型重试。该结构化重试只解决输出格式或 Schema 问题，不处理网络超时。
+- JSON 解析器可处理代码块、周边解释文字和尾随逗号；Schema 失败会把校验错误反馈给模型重试。网络错误由独立的共享请求策略处理。
 - 长论文和大量检索证据可能受到模型上下文窗口限制。
 - 真实 API 调用可能遇到网络超时、鉴权失败、限流、模型不可用和调用费用。
 - 后台任务仍由 FastAPI `BackgroundTasks` 在 API 进程内执行；任务元数据持久化到 SQLite，但服务重启不会恢复工作流，遗留的 `pending/running` 任务会标记为中断失败。
 - 状态 JSON 和 Markdown 报告仍是独立文件。文件被移动或删除后历史元数据仍可查询，但详情中的步骤或报告内容不可用；系统不会自动导入旧运行产物。
-- 同步分析接口会阻塞到工作流完成；当前未限制上传大小，也没有认证、权限控制、限流和生产部署保障。
+- 默认上传上限为 50 MiB；终态任务文件默认保留 30 天并在启动时清理，任务元数据仍会保留。
+- 取消在阶段边界生效，不会强制终止正在进行的单次模型请求。系统仍没有认证、权限控制、限流和生产部署保障。

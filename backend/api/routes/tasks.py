@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import shutil
 import uuid
+import shutil
 import json
 import logging
 from datetime import datetime
@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import ValidationError
 
 from backend.api.schemas import (
   TaskCreateResponse, TaskDetailResponse, TaskListResponse, TaskReportResponse,
@@ -20,6 +22,8 @@ from backend.core.orchestrator import create_default_orchestrator
 from backend.core.state import AnalysisStatus
 from backend.exporters.report_exporter import ReportExporter
 from backend.schemas.paper import PaperInput
+from backend.schemas.report_config import ReportConfiguration
+from backend.api.uploads import UploadValidationError, deduplication_key, save_validated_pdf
 
 router = APIRouter(
   prefix="/api/tasks",
@@ -64,16 +68,14 @@ def create_analysis_task(
   file: UploadFile = File(...),
   query: str = Form("Analyze this paper and generate a structured reading report."),
   language: Literal["zh", "en"] = Form("zh"),
+  analysis_depth: str = Form("standard"),
+  target_audience: str = Form("researcher"),
+  report_template: str = Form("standard"),
+  custom_sections: str | None = Form(None),
 ) -> TaskCreateResponse:
   """
     Upload a PDF and create a background analysis task.
   """
-
-  if not file.filename:
-    raise HTTPException(status_code=400, detail="Uploaded file has no filename.")
-
-  if not file.filename.lower().endswith(".pdf"):
-    raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
   settings = get_settings()
   task_id = f"task_{uuid.uuid4().hex[:12]}"
@@ -84,20 +86,33 @@ def create_analysis_task(
   pdf_path = upload_dir / f"{task_id}.pdf"
 
   try:
-    with pdf_path.open("wb") as buffer:
-      shutil.copyfileobj(file.file, buffer)
-  except Exception as exc:
-    raise HTTPException(status_code=500, detail="Failed to save uploaded PDF.") from exc
-  finally:
-    file.file.close()
+    saved = save_validated_pdf(file, pdf_path, settings.max_upload_bytes)
+  except UploadValidationError as exc:
+    raise HTTPException(status_code=400, detail=str(exc)) from exc
+  try:
+    report_config = ReportConfiguration.from_form(analysis_depth, target_audience,
+                                                   report_template, custom_sections)
+  except (ValueError, ValidationError) as exc:
+    pdf_path.unlink(missing_ok=True)
+    raise HTTPException(status_code=422, detail=str(exc)) from exc
+  config_data = report_config.model_dump(mode="json")
+  key = deduplication_key(saved.sha256, query, language, config_data)
+  existing = task_store.find_active_by_dedup_key(key)
+  if existing:
+    pdf_path.unlink(missing_ok=True)
+    return TaskCreateResponse(task_id=existing.task_id, status=existing.status,
+      message="An identical active task already exists; reusing it.", deduplicated=True)
 
   try:
     task_store.create_task(
       task_id=task_id,
       input_pdf_path=str(pdf_path),
-      metadata={"query": query, "language": language, "original_filename": file.filename},
+      metadata={"query": query, "language": language, "original_filename": file.filename,
+                "report_configuration": config_data},
+      file_sha256=saved.sha256, dedup_key=key,
     )
   except Exception as exc:
+    pdf_path.unlink(missing_ok=True)
     logger.exception("Failed to persist task %s", task_id)
     raise HTTPException(status_code=500, detail="Failed to persist analysis task.") from exc
 
@@ -107,6 +122,7 @@ def create_analysis_task(
     pdf_path=str(pdf_path),
     query=query,
     language=language,
+    report_configuration=config_data,
   )
 
   return TaskCreateResponse(
@@ -114,6 +130,42 @@ def create_analysis_task(
     status=APITaskStatus.PENDING,
     message="Analysis task created.",
   )
+
+
+@router.post("/{task_id}/cancel", response_model=TaskStatusResponse)
+def cancel_task(task_id: str) -> TaskStatusResponse:
+  record = task_store.request_cancel(task_id)
+  if record is None:
+    raise HTTPException(status_code=404, detail="Task not found.")
+  return TaskStatusResponse.model_validate(record.model_dump(by_alias=True))
+
+
+@router.post("/{task_id}/retry", response_model=TaskCreateResponse)
+def retry_task(task_id: str, background_tasks: BackgroundTasks) -> TaskCreateResponse:
+  source = task_store.get_task(task_id)
+  if source is None:
+    raise HTTPException(status_code=404, detail="Task not found.")
+  if source.status not in (APITaskStatus.FAILED, APITaskStatus.CANCELED):
+    raise HTTPException(status_code=409, detail="Only failed or canceled tasks can be retried.")
+  source_path = Path(source.input_pdf_path or "")
+  if not source.input_pdf_path or not source_path.is_file():
+    raise HTTPException(status_code=409, detail="The source PDF is unavailable; please upload it again.")
+  new_id = f"task_{uuid.uuid4().hex[:12]}"
+  new_path = source_path.with_name(f"{new_id}.pdf")
+  try:
+    shutil.copyfile(source_path, new_path)
+    metadata = {**source.task_metadata, "retry_of": task_id}
+    task_store.create_task(new_id, str(new_path), metadata, source.file_sha256,
+                           source.dedup_key, retry_of=task_id)
+  except Exception as exc:
+    new_path.unlink(missing_ok=True)
+    raise HTTPException(status_code=500, detail="Failed to create retry task.") from exc
+  background_tasks.add_task(run_analysis_task, new_id, str(new_path),
+                            str(source.task_metadata.get("query", "Analyze this paper.")),
+                            source.task_metadata.get("language", "zh"),
+                            source.task_metadata.get("report_configuration", {}))
+  return TaskCreateResponse(task_id=new_id, status=APITaskStatus.PENDING,
+                            message="Retry task created.")
 
 
 @router.get("/{task_id}", response_model=TaskStatusResponse)
@@ -155,6 +207,24 @@ def get_task_report(task_id: str) -> TaskReportResponse:
     report_markdown=report_markdown,
     report_path=record.report_path,
   )
+
+
+@router.get("/{task_id}/artifacts/{format}")
+def get_task_artifact(task_id: str,
+                      format: Literal["markdown", "json", "html", "pdf", "docx"]):
+  record = task_store.get_task(task_id)
+  if record is None:
+    raise HTTPException(status_code=404, detail="Task not found.")
+  if record.status != APITaskStatus.COMPLETED:
+    raise HTTPException(status_code=409, detail="Task is not completed.")
+  if not record.report_path or not Path(record.report_path).is_file():
+    raise HTTPException(status_code=404, detail="Source report is missing.")
+  from backend.exporters.artifact_exporter import ArtifactExporter
+  try:
+    path, media_type = ArtifactExporter().get_or_create(record, format)
+  except (OSError, ValueError, RuntimeError) as exc:
+    raise HTTPException(status_code=500, detail=f"Artifact generation failed: {exc}") from exc
+  return FileResponse(path, media_type=media_type, filename=path.name)
 
 
 @router.get("/{task_id}/detail", response_model=TaskDetailResponse)
@@ -225,13 +295,17 @@ def get_task_detail(task_id: str) -> TaskDetailResponse:
   return detail
 
 
-def run_analysis_task( task_id: str, pdf_path: str, query: str, language: Literal["zh", "en"],) -> None:
+def run_analysis_task(task_id: str, pdf_path: str, query: str, language: Literal["zh", "en"],
+                      report_configuration: dict | None = None) -> None:
   """
     Background task function.
 
     It updates task_store as the analysis progresses.
   """
 
+  if task_store.is_cancel_requested(task_id):
+    task_store.mark_canceled(task_id)
+    return
   task_store.mark_running(
     task_id=task_id,
     message="Paper analysis is running.",
@@ -250,7 +324,22 @@ def run_analysis_task( task_id: str, pdf_path: str, query: str, language: Litera
     state = orchestrator.run(
       paper_input=paper_input,
       output_language=language,
+      cancel_check=lambda: task_store.is_cancel_requested(task_id),
+      task_id=task_id,
+      report_configuration=report_configuration,
     )
+
+    state.metadata.update(getattr(orchestrator, "prompt_metadata", {}))
+    llm_client = orchestrator.planner_agent.llm_client
+    state.metadata["structured_output_stats"] = getattr(llm_client, "structured_output_stats", {})
+
+    if state.metadata.get("canceled"):
+      log_dir = settings.resolve_path(settings.log_dir)
+      log_dir.mkdir(parents=True, exist_ok=True)
+      state_json_path = log_dir / f"{task_id}_state.json"
+      ReportExporter().save_state_json(state, state_json_path)
+      task_store.mark_canceled(task_id, str(state_json_path))
+      return
 
     if state.status != AnalysisStatus.COMPLETED:
       log_dir = settings.resolve_path(settings.log_dir)
@@ -277,12 +366,14 @@ def run_analysis_task( task_id: str, pdf_path: str, query: str, language: Litera
     log_dir.mkdir(parents=True, exist_ok=True)
 
     report_path = report_dir / f"{task_id}_report.md"
+    report_json_path = report_dir / f"{task_id}_report.json"
     state_json_path = log_dir / f"{task_id}_state.json"
 
     exporter = ReportExporter()
     exporter.save_all(
       state=state,
       report_md_path=report_path,
+      report_json_path=report_json_path,
       state_json_path=state_json_path,
     )
 
@@ -302,6 +393,11 @@ def run_analysis_task( task_id: str, pdf_path: str, query: str, language: Litera
         "num_chunks": len(document.chunks) if document else 0,
         "num_evidence_items": len(evidence_bundle.items) if evidence_bundle else 0,
         "num_report_sections": len(final_report.sections),
+        "metadata_quality": state.metadata.get("metadata_quality", {}),
+        "paper_sections": state.metadata.get("paper_sections", []),
+        "report_configuration": state.metadata.get("report_configuration", {}),
+        "quality_evaluation": state.metadata.get("quality_evaluation", {}),
+        "artifact_formats": ["markdown", "json", "html", "pdf", "docx"],
       },
     )
 

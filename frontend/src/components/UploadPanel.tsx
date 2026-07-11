@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react'
-import type { OutputLanguage } from '../types/api'
+import type { AnalysisDepth, OutputLanguage, ReportConfiguration, ReportTemplate, TargetAudience } from '../types/api'
 
 interface UploadPanelProps {
   disabled: boolean
-  onSubmit: (file: File, query: string, language: OutputLanguage) => Promise<void>
+  onSubmit: (file: File, query: string, language: OutputLanguage, configuration: ReportConfiguration) => Promise<void>
 }
 
 const DEFAULT_QUERY = 'Analyze this paper and generate a structured reading report.'
@@ -12,6 +12,10 @@ export function UploadPanel({ disabled, onSubmit }: UploadPanelProps) {
   const [file, setFile] = useState<File | null>(null)
   const [query, setQuery] = useState(DEFAULT_QUERY)
   const [language, setLanguage] = useState<OutputLanguage>('zh')
+  const [depth, setDepth] = useState<AnalysisDepth>('standard')
+  const [audience, setAudience] = useState<TargetAudience>('researcher')
+  const [template, setTemplate] = useState<ReportTemplate>('standard')
+  const [customSections, setCustomSections] = useState('')
   const [validationError, setValidationError] = useState<string | null>(null)
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -28,7 +32,15 @@ export function UploadPanel({ disabled, onSubmit }: UploadPanelProps) {
     }
 
     setValidationError(null)
-    await onSubmit(file, query.trim(), language)
+    const sections = customSections.split(/[,\n]/).map(value => value.trim()).filter(Boolean)
+    if (sections.length > 20 || sections.some(value => value.length > 80)) {
+      setValidationError('Use at most 20 custom sections, each no longer than 80 characters.')
+      return
+    }
+    await onSubmit(file, query.trim(), language, {
+      analysis_depth: depth, target_audience: audience, report_template: template,
+      custom_sections: sections,
+    })
   }
 
   return (
@@ -93,6 +105,28 @@ export function UploadPanel({ disabled, onSubmit }: UploadPanelProps) {
             </label>
           </div>
         </fieldset>
+
+        <div className="report-options">
+          <label className="field"><span>Analysis depth</span>
+            <select value={depth} disabled={disabled} onChange={event => setDepth(event.target.value as AnalysisDepth)}>
+              <option value="quick">Quick</option><option value="standard">Standard</option><option value="deep">Deep</option>
+            </select>
+          </label>
+          <label className="field"><span>Target audience</span>
+            <select value={audience} disabled={disabled} onChange={event => setAudience(event.target.value as TargetAudience)}>
+              <option value="general">General</option><option value="researcher">Researcher</option><option value="reviewer">Reviewer</option>
+            </select>
+          </label>
+          <label className="field"><span>Report template</span>
+            <select value={template} disabled={disabled} onChange={event => setTemplate(event.target.value as ReportTemplate)}>
+              <option value="standard">Standard</option><option value="review">Peer review</option><option value="reproducibility">Reproducibility</option>
+            </select>
+          </label>
+        </div>
+        <label className="field"><span>Custom sections (optional, comma or line separated)</span>
+          <textarea rows={2} value={customSections} disabled={disabled}
+            onChange={event => setCustomSections(event.target.value)} placeholder="Ablations, Ethical considerations" />
+        </label>
 
         {validationError && <p className="form-error" role="alert">{validationError}</p>}
 

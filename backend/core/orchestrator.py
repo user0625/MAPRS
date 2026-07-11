@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from typing import Literal
 import uuid
+import re
 
 from backend.agents.critic_agent import CriticAgent
+from backend.agents.base_agent import AgentError
 from backend.agents.planner_agent import PlannerAgent
 from backend.agents.reader_agent import ReaderAgent
 from backend.agents.writer_agent import WriterAgent
+from backend.agents.metadata_extractor_agent import MetadataExtractionInput, MetadataExtractorAgent
+from backend.agents.verifier_agent import VerifierAgent, VerifierInput
 from backend.core.state import AnalysisState, AnalysisStatus, StepStatus
 from backend.schemas.agent_io import CriticInput, PlannerInput, ReaderInput, WriterInput
 from backend.schemas.paper import PaperInput
@@ -17,6 +21,9 @@ from backend.core.config import AppSettings
 from backend.llm.client import create_llm_client
 from backend.tools.embedder import MockEmbedder, OpenAICompatibleEmbedder
 from backend.tools.vector_store import NumpyVectorStore
+from backend.core.request_policy import RequestPolicy
+from backend.llm.prompt_loader import PromptTemplateLoader
+from backend.core.report_quality import ReportQualityGate
 
 
 class OrchestratorError(Exception):
@@ -40,6 +47,8 @@ class PaperAnalysisOrchestrator:
     reader_agent: ReaderAgent,
     critic_agent: CriticAgent,
     writer_agent: WriterAgent,
+    metadata_extractor_agent: MetadataExtractorAgent | None = None,
+    verifier_agent: VerifierAgent | None = None,
     ) -> None:
     self.pdf_loader = pdf_loader
     self.chunker = chunker
@@ -48,8 +57,12 @@ class PaperAnalysisOrchestrator:
     self.reader_agent = reader_agent
     self.critic_agent = critic_agent
     self.writer_agent = writer_agent
+    self.metadata_extractor_agent = metadata_extractor_agent
+    self.verifier_agent = verifier_agent
 
-  def run(self, paper_input: PaperInput, output_language: Literal["zh", "en"]="zh") -> AnalysisState:
+  def run(self, paper_input: PaperInput, output_language: Literal["zh", "en"]="zh",
+          cancel_check=None, task_id: str | None = None,
+          report_configuration: dict | None = None) -> AnalysisState:
     """
       Run the full analysis workflow.
 
@@ -65,20 +78,27 @@ class PaperAnalysisOrchestrator:
     """
 
     state = AnalysisState(
-      task_id=self._generate_task_id(),
+      task_id=task_id or self._generate_task_id(),
       paper_input=paper_input,
     )
     state.metadata["output_language"] = output_language
+    config = report_configuration or {}
+    state.metadata["report_configuration"] = config
 
     try:
-      self._parse_pdf(state)
-      self._chunk_document(state)
-      self._plan_analysis(state)
-      self._build_retrieval_index(state)
-      self._retrieve_evidence(state)
-      self._read_paper(state)
-      self._criticize_paper(state)
-      self._write_report(state)
+      for step in (self._parse_pdf, self._chunk_document, self._plan_analysis,
+                   self._build_retrieval_index, self._retrieve_evidence,
+                   self._read_paper, self._criticize_paper, self._write_report,
+                   self._verify_report):
+        if cancel_check and cancel_check():
+          state.metadata["canceled"] = True
+          state.error_message = "Task canceled by user."
+          return state
+        step(state)
+        if cancel_check and cancel_check():
+          state.metadata["canceled"] = True
+          state.error_message = "Task canceled by user."
+          return state
 
       state.mark_completed()
       return state
@@ -96,6 +116,47 @@ class PaperAnalysisOrchestrator:
       raise OrchestratorError(f"PDF parsing failed: {exc}") from exc
 
     state.document = document
+    if self.metadata_extractor_agent and not self.metadata_extractor_agent.is_mock:
+      adjudicate = ["title", "authors", "venue"]
+      requested = list(adjudicate)
+      for name in ("title", "authors", "abstract", "year", "venue", "doi", "arxiv_id",
+                   "language", "keywords"):
+        value = getattr(document.metadata, name)
+        provenance = document.metadata.fields.get(name)
+        if value in (None, "", []) or provenance is None or provenance.confidence < .7:
+          if name not in requested:
+            requested.append(name)
+      if requested:
+        try:
+          extracted = self.metadata_extractor_agent.run(MetadataExtractionInput(
+            current_metadata=document.metadata,
+            first_page_text=document.pages[0].text if document.pages else "",
+            abstract_candidate=document.metadata.abstract,
+            section_candidates=[section.name for section in document.sections],
+            requested_fields=requested,
+            adjudicate_fields=adjudicate,
+          ))
+          for name in requested:
+            value = getattr(extracted, name)
+            confidence = min(.85, extracted.confidence.get(name, .6))
+            if (name in adjudicate and confidence >= .65
+                and self._candidate_supported(name, value, document.metadata)):
+              document.metadata.set_field(name, value, "llm", confidence, force=True)
+            elif name not in adjudicate:
+              document.metadata.set_field(name, value, "llm", confidence)
+        except AgentError:
+          state.metadata["metadata_extractor_warning"] = \
+            "Metadata LLM fallback failed; deterministic metadata was preserved."
+    state.metadata["metadata_quality"] = {
+      name: field.model_dump(mode="json") for name, field in document.metadata.fields.items()
+    }
+    state.metadata["paper_sections"] = [section.model_dump(mode="json", exclude={"text"})
+                                         for section in document.sections]
+    depth = state.metadata.get("report_configuration", {}).get("analysis_depth", "standard")
+    settings = AppSettings()
+    state.metadata["hierarchical_analysis"] = bool(
+      depth == "deep" or len(document.pages) > settings.hierarchical_page_threshold
+      or len(document.full_text()) > settings.hierarchical_char_threshold)
 
     state.add_step(
       step_name="parse_pdf",
@@ -292,6 +353,7 @@ class PaperAnalysisOrchestrator:
       raise OrchestratorError("Cannot run WriterAgent before CriticAgent.")
 
     output_language = state.metadata.get("output_language", "zh")
+    configuration = state.metadata.get("report_configuration", {})
     writer_input = WriterInput(
       paper_metadata=state.document.metadata,
       analysis_plan=state.analysis_plan,
@@ -299,6 +361,10 @@ class PaperAnalysisOrchestrator:
       critic_notes=state.critic_notes,
       evidence_bundle=state.evidence_bundle,
       output_language=output_language,
+      analysis_depth=configuration.get("analysis_depth", "standard"),
+      target_audience=configuration.get("target_audience", "researcher"),
+      report_template=configuration.get("report_template", "standard"),
+      custom_sections=configuration.get("custom_sections", []),
     )
 
     final_report = self.writer_agent.run(writer_input)
@@ -314,6 +380,119 @@ class PaperAnalysisOrchestrator:
         "has_markdown": bool(final_report.to_markdown()),
       },
     )
+
+  def _verify_report(self, state: AnalysisState) -> None:
+    if state.final_report is None or state.document is None:
+      raise OrchestratorError("Cannot verify a missing report or document.")
+    settings = AppSettings()
+    gate = ReportQualityGate(settings.quality_pass_score, settings.citation_validity_min_score)
+    summary = gate.evaluate(state.final_report, state.evidence_bundle, state.document)
+    revision_instructions = list(summary.issues)
+    llm_result = None
+    if (settings.verifier_enabled and self.verifier_agent
+        and not self.verifier_agent.is_mock):
+      try:
+        llm_result = self.verifier_agent.run(VerifierInput(
+          report=state.final_report, evidence_bundle=state.evidence_bundle,
+          deterministic_issues=summary.issues, pass_score=settings.quality_pass_score,
+          citation_score=settings.citation_validity_min_score))
+      except AgentError:
+        state.metadata["verifier_warning"] = \
+          "LLM Verifier failed; deterministic verification remained active."
+        llm_result = None
+    if llm_result is not None:
+      revision_instructions.extend(llm_result.revision_instructions)
+      summary.accuracy = llm_result.accuracy
+      summary.completeness = llm_result.completeness
+      summary.faithfulness = llm_result.faithfulness
+      summary.citation_validity = min(summary.citation_validity, llm_result.citation_validity)
+      summary.critical_depth = llm_result.critical_depth
+      summary.overall = llm_result.overall
+      summary.issues = (summary.issues + [issue.description for issue in llm_result.issues])[:20]
+      summary.passed = bool(summary.passed and llm_result.passed
+                            and summary.overall >= settings.quality_pass_score
+                            and summary.citation_validity >= settings.citation_validity_min_score)
+    if settings.verifier_enabled and not summary.passed:
+      gate.sanitize(state.final_report, state.evidence_bundle)
+      writer_input = self._build_writer_input(state)
+      try:
+        state.final_report = self.writer_agent.revise(
+          writer_input, state.final_report, list(dict.fromkeys(revision_instructions))[:20])
+      except AgentError:
+        state.metadata["revision_warning"] = \
+          "Writer revision failed; the original report was preserved."
+      summary = gate.evaluate(state.final_report, state.evidence_bundle, state.document, revision_count=1)
+      if self.verifier_agent and not self.verifier_agent.is_mock:
+        try:
+          llm_result = self.verifier_agent.run(VerifierInput(
+            report=state.final_report, evidence_bundle=state.evidence_bundle,
+            deterministic_issues=summary.issues, pass_score=settings.quality_pass_score,
+            citation_score=settings.citation_validity_min_score))
+        except AgentError:
+          llm_result = None
+      if llm_result is not None:
+        summary.accuracy = llm_result.accuracy
+        summary.completeness = llm_result.completeness
+        summary.faithfulness = llm_result.faithfulness
+        summary.citation_validity = min(summary.citation_validity, llm_result.citation_validity)
+        summary.critical_depth = llm_result.critical_depth
+        summary.overall = llm_result.overall
+        summary.issues = (summary.issues + [issue.description for issue in llm_result.issues])[:20]
+        summary.passed = bool(summary.passed and llm_result.passed
+                              and summary.overall >= settings.quality_pass_score
+                              and summary.citation_validity >= settings.citation_validity_min_score)
+    state.final_report.quality_summary = summary
+    state.metadata["quality_evaluation"] = summary.model_dump(mode="json")
+    if not summary.passed:
+      state.final_report.warning = (llm_result.user_warning if llm_result else None) or \
+        "报告未完全通过质量门禁；请结合原文核对未解决问题。"
+    state.final_report.markdown_content = None
+    state.add_step(step_name="verify_report", status=StepStatus.SUCCESS,
+      message="Report citation and quality checks completed.",
+      metadata={"overall": summary.overall, "passed": summary.passed,
+                "revision_count": summary.revision_count})
+
+  def _build_writer_input(self, state: AnalysisState) -> WriterInput:
+    if not all((state.document, state.analysis_plan, state.reader_notes, state.critic_notes)):
+      raise OrchestratorError("Writer revision inputs are incomplete.")
+    configuration = state.metadata.get("report_configuration", {})
+    return WriterInput(paper_metadata=state.document.metadata,
+      analysis_plan=state.analysis_plan, reader_notes=state.reader_notes,
+      critic_notes=state.critic_notes, evidence_bundle=state.evidence_bundle,
+      output_language=state.metadata.get("output_language", "zh"),
+      analysis_depth=configuration.get("analysis_depth", "standard"),
+      target_audience=configuration.get("target_audience", "researcher"),
+      report_template=configuration.get("report_template", "standard"),
+      custom_sections=configuration.get("custom_sections", []))
+
+  @staticmethod
+  def _candidate_supported(name: str, value, metadata) -> bool:
+    """Reject free-form model inventions before merging adjudicated fields."""
+    if value in (None, "", []):
+      return False
+    candidate_text = " ".join(candidate.text for candidate in metadata.candidates)
+    def normalize(text) -> list[str]:
+      return re.findall(r"[\w-]+", str(text).casefold())
+    available = set(normalize(candidate_text))
+    values = value if isinstance(value, list) else [value]
+    for item in values:
+      tokens = normalize(item)
+      if not tokens or sum(token in available for token in tokens) / len(tokens) < .9:
+        return False
+    joined = " ".join(str(item) for item in values).casefold()
+    if name == "title":
+      return (len(joined) <= 300 and not joined.startswith("arxiv:")
+              and not re.fullmatch(r"(?:19|20)\d{2}.*", joined))
+    if name == "authors":
+      banned = ("university", "department", "institute", "laboratory", "abstract", "@")
+      if any(word in joined for word in banned):
+        return False
+      title_tokens = set(normalize(metadata.title or ""))
+      author_tokens = set(normalize(joined))
+      if author_tokens and len(author_tokens & title_tokens) / len(author_tokens) > .7:
+        return False
+      return True
+    return len(joined) <= 200
 
   def _generate_task_id(self) -> str:
     return f"task_{uuid.uuid4().hex[:12]}"
@@ -348,6 +527,8 @@ def create_default_orchestrator(settings: AppSettings) -> PaperAnalysisOrchestra
       api_key=settings.embedding_api_key,
       base_url=settings.embedding_base_url,
       model_name=settings.embedding_model,
+      request_policy=RequestPolicy.from_settings(settings),
+      timeout=(settings.request_connect_timeout, settings.request_read_timeout),
     )
   else:
     raise ValueError(f"Unsupported embedding_provider: {settings.embedding_provider}")
@@ -357,7 +538,7 @@ def create_default_orchestrator(settings: AppSettings) -> PaperAnalysisOrchestra
     vector_store=NumpyVectorStore(),
   )
 
-  return PaperAnalysisOrchestrator(
+  orchestrator = PaperAnalysisOrchestrator(
     pdf_loader=PDFLoader(),
     chunker=DocumentChunker(
       chunk_size=settings.chunk_size,
@@ -368,4 +549,11 @@ def create_default_orchestrator(settings: AppSettings) -> PaperAnalysisOrchestra
     reader_agent=ReaderAgent(llm_client=llm_client),
     critic_agent=CriticAgent(llm_client=llm_client),
     writer_agent=WriterAgent(llm_client=llm_client),
+    metadata_extractor_agent=MetadataExtractorAgent(llm_client=llm_client),
+    verifier_agent=VerifierAgent(llm_client=llm_client),
   )
+  loader = PromptTemplateLoader()
+  hashes = loader.template_hashes()
+  orchestrator.prompt_metadata = {"prompt_set_version": settings.prompt_set_version,
+                                  "prompt_template_hashes": hashes}
+  return orchestrator

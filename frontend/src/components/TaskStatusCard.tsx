@@ -3,6 +3,8 @@ import type { TaskStatus, TaskStatusResponse } from '../types/api'
 interface TaskStatusCardProps {
   task: TaskStatusResponse | null
   taskId: string | null
+  onCancel?: () => Promise<void>
+  actionPending?: boolean
 }
 
 const statusLabels: Record<TaskStatus, string> = {
@@ -10,9 +12,10 @@ const statusLabels: Record<TaskStatus, string> = {
   running: 'Running',
   completed: 'Completed',
   failed: 'Failed',
+  canceled: 'Canceled',
 }
 
-export function TaskStatusCard({ task, taskId }: TaskStatusCardProps) {
+export function TaskStatusCard({ task, taskId, onCancel, actionPending }: TaskStatusCardProps) {
   if (!taskId) {
     return (
       <section className="panel status-card status-empty">
@@ -50,9 +53,9 @@ export function TaskStatusCard({ task, taskId }: TaskStatusCardProps) {
       </dl>
 
       {(status === 'pending' || status === 'running') && (
-        <div className="progress-track" aria-label="Analysis is in progress">
+        <><div className="progress-track" aria-label="Analysis is in progress">
           <span />
-        </div>
+        </div>{onCancel && <button className="task-action danger" disabled={actionPending} onClick={() => void onCancel()}>{actionPending ? 'Canceling…' : 'Cancel'}</button>}</>
       )}
 
       {status === 'failed' && task?.error_message && (
@@ -61,6 +64,7 @@ export function TaskStatusCard({ task, taskId }: TaskStatusCardProps) {
           <span>{task.error_message}</span>
         </div>
       )}
+      {status === 'canceled' && <div className="error-message"><strong>Analysis canceled</strong><span>You can retry it from Task History.</span></div>}
     </section>
   )
 }

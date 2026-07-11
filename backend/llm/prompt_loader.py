@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 from string import Formatter
 from typing import Any
 
@@ -68,6 +69,16 @@ class PromptTemplateLoader:
       return template.format(**safe_kwargs).strip()
     except Exception as exc:
       raise PromptTemplateError(f"Failed to render prompt template: {template_name}") from exc
+
+  def template_hash(self, template_name: str, length: int = 12) -> str:
+    """Return a stable short SHA-256 fingerprint for prompt provenance."""
+    if not 8 <= length <= 64:
+      raise ValueError("hash length must be between 8 and 64")
+    return hashlib.sha256(self.load(template_name).encode("utf-8")).hexdigest()[:length]
+
+  def template_hashes(self, length: int = 12) -> dict[str, str]:
+    return {path.name: self.template_hash(path.name, length)
+            for path in sorted(self.prompt_dir.glob("*.md"))}
 
   def get_template_variables(self, template: str) -> set[str]:
     """

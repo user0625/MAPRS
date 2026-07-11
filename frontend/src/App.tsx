@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createAnalysisTask, getTaskReport, getTaskStatus } from './api/paperApi'
+import { cancelTask, createAnalysisTask, getTaskReport, getTaskStatus } from './api/paperApi'
 import { ReportViewer } from './components/ReportViewer'
 import { TaskStatusCard } from './components/TaskStatusCard'
 import { UploadPanel } from './components/UploadPanel'
@@ -8,6 +8,7 @@ import type {
   OutputLanguage,
   TaskReportResponse,
   TaskStatusResponse,
+  ReportConfiguration,
 } from './types/api'
 import './App.css'
 
@@ -25,12 +26,14 @@ function App() {
   const [report, setReport] = useState<TaskReportResponse | null>(null)
   const [requestError, setRequestError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [actionPending, setActionPending] = useState(false)
   const generationRef = useRef(0)
 
   const handleSubmit = useCallback(async (
     file: File,
     query: string,
     language: OutputLanguage,
+    configuration: ReportConfiguration,
   ) => {
     generationRef.current += 1
     setSubmitting(true)
@@ -40,7 +43,7 @@ function App() {
     setRequestError(null)
 
     try {
-      const created = await createAnalysisTask(file, query, language)
+      const created = await createAnalysisTask(file, query, language, configuration)
       setTaskId(created.task_id)
       setHistoryRefresh(value => value + 1)
     } catch (error: unknown) {
@@ -72,7 +75,7 @@ function App() {
           return
         }
 
-        if (nextTask.status === 'failed') {
+        if (nextTask.status === 'failed' || nextTask.status === 'canceled') {
           setSubmitting(false)
           return
         }
@@ -91,6 +94,14 @@ function App() {
       cancelled = true
       if (timeoutId !== undefined) clearTimeout(timeoutId)
     }
+  }, [taskId])
+
+  const handleCancel = useCallback(async () => {
+    if (!taskId) return
+    setActionPending(true); setRequestError(null)
+    try { const next = await cancelTask(taskId); setTask(next); setHistoryRefresh(value => value + 1) }
+    catch (error) { setRequestError(toErrorMessage(error)) }
+    finally { setActionPending(false) }
   }, [taskId])
 
   return (
@@ -124,7 +135,7 @@ function App() {
         {activeTab === 'new' ? <div className="workspace-grid">
           <UploadPanel disabled={submitting} onSubmit={handleSubmit} />
           <div className="results-column">
-            <TaskStatusCard task={task} taskId={taskId} />
+            <TaskStatusCard task={task} taskId={taskId} onCancel={handleCancel} actionPending={actionPending} />
             {requestError && (
               <div className="request-error" role="alert">
                 <strong>Unable to continue</strong>

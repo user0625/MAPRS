@@ -67,7 +67,7 @@ class BaseAgent(ABC):
         max_retries=max_retries,
       )
     except LLMError as exc:
-      raise AgentError(f"{self.name} failed to generate valid output.") from exc
+      raise AgentError(f"{self.name} failed: {exc}") from exc
 
   def build_schema_instruction(self, output_schema: type[BaseModel]) -> str:
     """

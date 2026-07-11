@@ -78,5 +78,6 @@ def test_generate_pydantic_fails_after_retries():
             max_retries=2,
         )
 
-    assert "Failed to generate valid ExpectedOutput" in str(exc_info.value)
+    assert "Schema validation failed for ExpectedOutput after 3 attempts" in str(exc_info.value)
+    assert "wrong_field" in str(exc_info.value)
     assert client.calls == 3

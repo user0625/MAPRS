@@ -1,11 +1,22 @@
-export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
 
 export type OutputLanguage = 'zh' | 'en'
+export type AnalysisDepth = 'quick' | 'standard' | 'deep'
+export type TargetAudience = 'general' | 'researcher' | 'reviewer'
+export type ReportTemplate = 'standard' | 'review' | 'reproducibility'
+
+export interface ReportConfiguration {
+  analysis_depth: AnalysisDepth
+  target_audience: TargetAudience
+  report_template: ReportTemplate
+  custom_sections: string[]
+}
 
 export interface TaskCreateResponse {
   task_id: string
   status: TaskStatus
   message: string
+  deduplicated?: boolean
 }
 
 export interface TaskStatusResponse {

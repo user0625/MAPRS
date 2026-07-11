@@ -10,6 +10,39 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读场景的全栈
 
 ---
 
+## 📝 最近更新
+
+- `2026-07-11`
+  - Phase A 稳定性：LLM 与 Embedding 统一超时/重试策略，支持 `Retry-After`、总请求预算和脱敏错误。
+  - 任务控制：支持活动任务去重、阶段边界取消、失败/取消任务重试，以及终态文件定期清理。
+  - 上传防护：后台与同步接口统一校验扩展名、MIME、PDF 文件头和大小，并在写入时计算 SHA-256。
+  - 可追溯性：响应返回 `X-Request-ID`；任务详情记录 Prompt Set、模板哈希和结构化输出统计。
+  - 报告交互：新建分析与历史详情中的 Markdown 报告均支持一键复制和下载 `.md` 文件。
+  - 历史工作区：调整为顶部 Archive + Analysis Detail、底部 Workflow Timeline + Report；Archive 每页固定三项，时间线和报告可独立折叠。
+  - 论文信息：任务详情补充论文标题与作者，兼容从旧任务 state 文件安全读取。
+  - 持久化：使用 SQLModel + SQLite 保存任务历史，服务重启后仍可分页查询；中断任务会明确标记为失败。
+  - Phase D：新增版面候选 + LLM 元数据裁决、章节识别、Verifier 质量门禁、报告预设和五种格式导出。
+  - 验证：后端非 API 测试 `101 passed, 6 skipped`，前端 `npm run build`、相关 Ruff 检查与 `git diff --check` 通过。
+
+## 📊 当前完成度
+
+| 模块 | 状态 | 当前能力 |
+| :--- | :---: | :--- |
+| PDF 解析与分块 | ✅ 已完成 | 文本型 PDF、版面元数据候选、章节识别、页码和稳定分块 ID |
+| 多 Agent 分析 | ✅ 已完成 | Planner、Reader、Critic、Writer 串行协作 |
+| 轻量 RAG | ✅ MVP 完成 | Embedding、内存向量索引、Top-K 证据检索 |
+| 结构化报告 | ✅ 已完成 | 中英文 Markdown、Schema 校验、状态 JSON |
+| Web 分析工作区 | ✅ 已完成 | 上传、参数配置、状态轮询、失败反馈、报告展示 |
+| 任务持久化与历史 | ✅ 已完成 | SQLite、分页历史、安全详情、重启中断处理 |
+| 历史详情体验 | ✅ 已完成 | 论文信息、三项分页 Archive、可折叠时间线与报告 |
+| 报告操作 | ✅ 已完成 | 复制 Markdown，下载 Markdown、JSON、HTML、PDF、DOCX |
+| 报告质量 | ✅ Phase D 核心完成 | 引用回溯、五维评分、真实 Verifier、最多一次自动修订 |
+| 工程稳定性 | ✅ Phase A 完成 | 请求重试、严格上传、去重、取消/重试、文件清理、Prompt 统计 |
+| 可靠任务队列 | ⏳ 待优化 | 当前仍使用 FastAPI 进程内 `BackgroundTasks` |
+| Ask-the-Paper / 多论文 | 🗓️ 规划中 | Schema 与详情结构已预留，业务接口尚未实现 |
+
+---
+
 ## ✨ 项目亮点
 
 - 🤖 **多 Agent 协作**：Planner、Reader、Critic、Writer 分别负责规划、忠实提取、批判分析和报告撰写。
@@ -157,10 +190,10 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 2. 填写希望 Agent 重点分析的问题。
 3. 选择中文或英文报告。
 4. 点击 **Start Analysis**。
-5. 等待任务从 `pending`、`running` 进入 `completed`。
+5. 等待任务从 `pending`、`running` 进入 `completed`；运行中可点击 **Cancel**。
 6. 在页面中阅读生成的 Markdown 报告。
 
-切换到 **Task History** 可查看历史任务。页面顶部由每页三张卡片的 Archive 和等高的 Analysis Detail 组成，详情包含论文标题、作者、任务参数和时间；下方 Workflow Timeline 与 Report 纵向排列并可独立折叠。移动端会自动改为单栏布局。
+切换到 **Task History** 可查看历史任务。`failed` 或 `canceled` 任务可点击 **Retry** 创建关联的新任务；原任务记录不会被覆盖。详情还会展示 Prompt Set 和结构化输出调用摘要。
 
 示例 PDF 仅应在确认版权、隐私和再分发许可后加入公开仓库。
 
@@ -213,6 +246,21 @@ LLM 和 Embedding 可以独立配置。例如可以使用真实 LLM 配合 Mock 
 | `REPORT_DIR` | `backend/outputs/reports` | Markdown 报告目录 |
 | `LOG_DIR` | `backend/outputs/logs` | AnalysisState JSON 目录 |
 | `DATABASE_URL` | `sqlite:///backend/data/tasks.db` | 持久化任务历史的 SQLite 数据库 |
+| `REQUEST_CONNECT_TIMEOUT` | `10` | 外部请求连接超时，单位秒 |
+| `REQUEST_READ_TIMEOUT` | `60` | 外部请求读取超时，单位秒 |
+| `REQUEST_TOTAL_BUDGET` | `120` | 单次工作流外部请求重试预算，单位秒 |
+| `REQUEST_MAX_RETRIES` | `2` | 连接错误、超时、HTTP 429/5xx 的最大重试次数 |
+| `REQUEST_BACKOFF_BASE` | `1` | 指数退避基数，单位秒 |
+| `REQUEST_BACKOFF_MAX` | `8` | 单次退避上限，单位秒 |
+| `MAX_UPLOAD_BYTES` | `52428800` | PDF 上传上限，默认 50 MiB |
+| `FILE_RETENTION_DAYS` | `30` | 终态任务文件保留天数 |
+| `PROMPT_SET_VERSION` | `v1` | 写入任务状态的 Prompt 集版本 |
+| `HIERARCHICAL_PAGE_THRESHOLD` | `20` | 长论文层次化路径的页数阈值 |
+| `HIERARCHICAL_CHAR_THRESHOLD` | `60000` | 长论文层次化路径的字符阈值 |
+| `VERIFIER_ENABLED` | `true` | 是否执行质量门禁和 Verifier |
+| `QUALITY_PASS_SCORE` | `75` | 报告质量总分通过线 |
+| `CITATION_VALIDITY_MIN_SCORE` | `80` | 引用有效性最低通过分 |
+| `MAX_CUSTOM_SECTIONS` | `20` | 自定义报告章节数量上限 |
 | `RUN_REAL_LLM_TESTS` | `0` | 设置为 `1` 时启用真实模型测试 |
 
 真实模型调用依赖网络、账号权限、模型可用性和服务配额，可能产生费用。网络超时、鉴权失败和限流与结构化输出校验属于不同类型的错误。
@@ -233,12 +281,22 @@ Content-Type: multipart/form-data
 - `file`：PDF 文件。
 - `query`：分析要求。
 - `language`：`zh` 或 `en`。
+- `analysis_depth`：`quick`、`standard` 或 `deep`。
+- `target_audience`：`general`、`researcher` 或 `reviewer`。
+- `report_template`：`standard`、`review` 或 `reproducibility`。
+- `custom_sections`：可选 JSON 字符串数组，最多 20 项。
+
+上传必须使用 `.pdf` 扩展名，MIME 为 `application/pdf` 或 `application/octet-stream`，且内容以 `%PDF-` 开头。默认最大 50 MiB。系统以“文件 SHA-256 + 标准化 query + language”识别重复任务；相同任务仍处于 `pending/running` 时会返回原 `task_id`，并设置 `deduplicated: true`。
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/tasks/analyze \
   -F 'file=@backend/data/raw/example.pdf;type=application/pdf' \
   -F 'query=分析论文的主要贡献、实验设计和局限' \
-  -F 'language=zh'
+  -F 'language=zh' \
+  -F 'analysis_depth=deep' \
+  -F 'target_audience=reviewer' \
+  -F 'report_template=review' \
+  -F 'custom_sections=["消融实验","伦理风险"]'
 ```
 
 ### 查询任务状态
@@ -247,7 +305,16 @@ curl -X POST http://127.0.0.1:8000/api/tasks/analyze \
 GET /api/tasks/{task_id}
 ```
 
-状态包括 `pending`、`running`、`completed` 和 `failed`。失败时响应中的 `error_message` 会说明 API 调用、JSON 解析或 Schema 校验等错误；失败状态也会尽可能保存到 `LOG_DIR`。
+状态包括 `pending`、`running`、`completed`、`failed` 和 `canceled`。
+
+### 取消与重试
+
+```http
+POST /api/tasks/{task_id}/cancel
+POST /api/tasks/{task_id}/retry
+```
+
+取消采用协作式阶段边界检查：不会强杀正在执行的单次模型 HTTP 请求，但不会继续启动后续阶段。重复取消是幂等操作。只有 `failed` 和 `canceled` 任务可以重试；重试会复制仍存在的源 PDF、创建新 `task_id` 并通过 `retry_of` 保留关联。源文件已经清理或缺失时返回 `409`，需要重新上传。
 
 ### 获取报告
 
@@ -265,6 +332,26 @@ GET /api/tasks/{task_id}/detail
 ```
 
 历史列表按创建时间倒序分页。详情包含安全筛选后的工作流步骤摘要，并在文件仍存在时返回 Markdown 报告。任务元数据存储在 SQLite 中，因此服务重启后仍可查询；重启时未完成的任务会标记为失败。已有磁盘报告不会自动导入数据库。
+
+详情的安全 metadata 包含 Prompt Set 版本、模板短哈希和结构化输出统计。统计包括总调用数、首轮成功数、发生重试数、最终失败数，以及按 Schema 汇总的调用、尝试和结果；不包含模型原始响应或论文正文。
+
+### 请求 ID 与错误响应
+
+服务会透传格式安全的 `X-Request-ID`，否则自动生成，并始终写入响应头。错误 JSON 保留兼容字段 `detail`，同时返回 `code` 和 `request_id`：
+
+```json
+{
+  "detail": "Task not found.",
+  "code": "not_found",
+  "request_id": "7adba44d02ea4fbfa22d0e73640e653f"
+}
+```
+
+常见错误分类包括 `validation`、`not_found`、`conflict`、`network_timeout`、`rate_limit`、`upstream`、`json_parse`、`schema_validation`、`workflow` 和 `canceled`。客户端只应展示 `detail`，排查问题时使用 `request_id` 关联服务端日志。
+
+### 文件生命周期
+
+应用启动时清理超过 `FILE_RETENTION_DAYS` 的终态任务上传 PDF、报告和 state JSON，并保留 SQLite 历史及清理标记。清理仅处理系统命名的 `task_*` / `api_*` 文件，不会删除示例文件或其他用户文件。同步接口的临时上传在请求结束后立即清理。
 
 ### 同步上传分析
 
@@ -392,93 +479,101 @@ npm run build
 
 ## 🗺️ 后续规划
 
-Roadmap 按依赖关系从稳定当前 MVP，逐步演进到持久化、交互模式和生产部署。以下均为待实现能力。
+Roadmap 按依赖关系从当前 MVP 逐步演进到可靠任务执行、深度交互和生产部署。`[x]` 表示已完成，`[ ]` 表示后续工作。
 
 ### Phase A：工程稳定性优化
 
-- 为 LLM 和 Embedding 请求增加可配置的连接、读取和总超时，以及针对超时、连接错误、429 和 5xx 的指数退避重试。
-- 统一错误类型、请求 ID、结构化日志和前后端脱敏错误信息，区分网络、解析、Schema 和工作流错误。
-- 增加任务取消、手动重试、失败清理、临时文件生命周期和重复任务保护。
-- 增加上传大小、扩展名、MIME 类型和 PDF 内容校验，防止异常文件耗尽服务资源。
-- 完善 Prompt 版本管理、配置校验、回归样例和结构化输出成功率统计。
+- [x] 为 LLM 和 Embedding 请求增加可配置的连接、读取和总超时，以及针对超时、连接错误、429 和 5xx 的指数退避重试。
+- [x] 统一错误类型、请求 ID、结构化日志和前后端脱敏错误信息，区分网络、解析、Schema 和工作流错误。
+- [x] 增加任务取消、手动重试、失败清理、临时文件生命周期和重复任务保护。
+- [x] 增加上传大小、MIME 类型和 PDF 内容校验。
+- [x] Agent 输入输出使用 Schema 校验，Prompt 已外置，并支持结构化输出失败反馈重试。
+- [x] 完善 Prompt 版本管理、回归样例和结构化输出成功率统计。
 
 ### Phase B：可靠任务执行与历史管理
 
-- 当前已使用 SQLite 保存任务、论文元数据、阶段状态、错误、报告路径和创建/完成时间；后续可按部署规模迁移 PostgreSQL。
-- 使用 Redis 配合 Celery、RQ 或独立 Worker 执行长任务，替换进程内 `BackgroundTasks` 和内存任务存储。
-- 当前已提供分页历史列表和安全详情接口；后续增加删除、重新运行和失败恢复。
-- 保存工作流事件和 checkpoint，为断点恢复、审计和问题排查提供基础。
-- 制定上传 PDF、运行日志、向量索引和报告文件的保留、清理与配额策略。
+- [x] 使用 SQLite 保存任务、论文元数据、阶段状态、错误、报告路径和创建/完成时间。
+- [x] 提供分页历史列表、安全详情接口和服务重启后的中断任务处理。
+- [ ] 按部署规模迁移 PostgreSQL，并使用 Redis + Celery、RQ 或独立 Worker 替换进程内 `BackgroundTasks`。
+- [ ] 增加任务删除、重新运行、失败恢复、工作流 checkpoint 和审计事件。
+- [x] 为上传 PDF、state 和报告实现可配置保留期及安全清理；向量索引配额随持久化向量库阶段继续完善。
 
 ### Phase C：前端体验增强
 
-- 使用 SSE 或 WebSocket 推送 Agent、检索和报告生成进度，替代固定时间轮询。
-- 当前已提供任务历史、运行详情和可折叠阶段时间线；后续增加失败重试、任务取消和网络断线恢复。
-- 增加拖拽上传、文件校验反馈、分析参数预设、Prompt 模板选择和深色模式。
-- 支持报告目录导航、关键词搜索、证据引用跳转、复制和 Markdown/HTML/PDF 下载。
-- 完善移动端、键盘操作、可访问性、加载骨架和超长报告渲染性能。
+- [x] 提供任务历史、运行详情、论文信息、可折叠阶段时间线和响应式布局。
+- [x] 支持报告复制和 Markdown 下载。
+- [ ] 使用 SSE 或 WebSocket 推送 Agent、检索和报告生成进度，替代固定时间轮询。
+- [x] 增加失败/取消任务重试、运行任务取消及操作失败反馈。
+- [ ] 增加网络断线恢复、拖拽上传、参数预设和深色模式。
+- [ ] 支持报告目录导航、关键词搜索、证据引用跳转及 HTML/PDF 下载。
+- [ ] 完善键盘操作、加载骨架和超长报告渲染性能。
 
 ### Phase D：报告质量优化
 
-- 建立覆盖准确性、完整性、忠实度、引用有效性和批判深度的离线评估集与指标。
-- 增加引用校验和证据覆盖检查，确保关键结论能够回溯到论文页码和分块。
-- 对长论文采用分章节分析、层次化摘要、上下文压缩和可安全并行的 Agent 任务。
-- 引入 Reviewer 或 Verifier Agent，对事实、遗漏、内部矛盾和无证据结论进行二次检查与修订。
-- 支持自定义报告模板、分析深度、目标读者和 HTML、PDF、DOCX、JSON 等导出格式。
+- [ ] 建立覆盖准确性、完整性、忠实度、引用有效性和批判深度的完整离线评估集与指标。
+- [x] 增加引用校验和证据覆盖检查，确保关键结论能够回溯到论文页码和分块。
+- [x] 识别长论文并保留章节结构，为分章节层次化分析提供上下文边界。
+- [x] 引入确定性 Verifier，对无效引用、位置错误和无证据 claim 进行检查，最多自动修订一次。
+- [x] 支持报告模板、分析深度、目标读者、自定义章节和 Markdown、HTML、PDF、DOCX、JSON 导出。
+
+创建任务时可提交 `analysis_depth`、`target_audience`、`report_template` 和 JSON 字符串数组 `custom_sections`。完成后使用 `GET /api/tasks/{task_id}/artifacts/{format}` 下载产物，其中 `format` 为 `markdown | json | html | pdf | docx`。HTML/PDF/DOCX 首次请求生成并缓存。
+
+真实 LLM 模式会默认让 Metadata Extractor 裁决标题、作者和 venue 候选，并补充其他缺失或低置信字段。该调用只包含首页文本块及其字号、坐标、旋转方向、摘要候选和章节标题候选，不发送整篇论文。模型只能选择或组合候选，结果还必须通过离线一致性检查；DOI、arXiv ID 和年份仍以确定性解析为主。Writer 完成后，Verifier 使用结构化报告和当前论文的证据片段检查事实支持、遗漏、矛盾和引用；不通过时 Writer 最多修订一次并再次验证。Mock 模式不会触发这两个模型调用。
 
 ### Phase E：RAG 检索增强
 
-- 使用 FAISS、Qdrant、Milvus 等持久化向量存储，支持索引复用和规模化文档管理。
-- 增加 BM25 与向量双路召回、RRF 融合、Cross-encoder Rerank、证据去重和多样性控制。
-- 引入 query rewrite、HyDE、按章节过滤和 metadata filtering，提高方法、实验与局限类问题的召回率。
-- 建立 Recall@K、MRR、证据覆盖率、噪声率和检索延迟评估，并比较不同 Embedding/Rerank 模型。
-- 增加 Embedding 和检索结果缓存、批量向量化、token/延迟/成本统计及索引版本管理。
+- [ ] 使用 FAISS、Qdrant、Milvus 等持久化向量存储，支持索引复用和规模化文档管理。
+- [ ] 增加 BM25 与向量双路召回、RRF 融合、Cross-encoder Rerank、证据去重和多样性控制。
+- [ ] 引入 query rewrite、HyDE、按章节过滤和 metadata filtering，提高方法、实验与局限类问题的召回率。
+- [ ] 建立 Recall@K、MRR、证据覆盖率、噪声率和检索延迟评估，并比较不同 Embedding/Rerank 模型。
+- [ ] 增加 Embedding 和检索结果缓存、批量向量化、token/延迟/成本统计及索引版本管理。
 
 ### Phase F：Ask-the-Paper 问答模式
 
-- 在单篇论文分析完成后提供多轮问答，复用已解析文档、分块、向量索引和论文元数据。
-- 每个回答返回正文答案、evidence IDs、页码和相关原文片段；证据不足时明确拒绝推断。
-- 支持对话上下文、追问改写、指定章节/页码范围和中英文回答。
-- 保存会话与消息历史，并支持从回答跳转到相关报告章节或论文证据。
-- 为答案忠实度、引用正确性、上下文污染和 prompt injection 增加专项测试。
+- [ ] 在单篇论文分析完成后提供多轮问答，复用已解析文档、分块、向量索引和论文元数据。
+- [ ] 每个回答返回正文答案、evidence IDs、页码和相关原文片段；证据不足时明确拒绝推断。
+- [ ] 支持对话上下文、追问改写、指定章节/页码范围和中英文回答。
+- [ ] 保存会话与消息历史，并支持从回答跳转到相关报告章节或论文证据。
+- [ ] 为答案忠实度、引用正确性、上下文污染和 prompt injection 增加专项测试。
 
 ### Phase G：多论文对比模式
 
-- 支持批量上传、arXiv ID、DOI、论文 URL 和远程 PDF，并为每篇论文建立独立索引与分析状态。
-- 统一抽取研究问题、数据集、方法、基线、指标、结果和局限，生成可比较的结构化表示。
-- 提供论文对比矩阵、共同点与差异、结果冲突、方法演进和适用场景分析。
-- 支持跨论文证据检索，所有比较结论标注来源论文、页码和 evidence ID。
-- 在对比基础上生成相关工作、研究脉络、研究空白和初步文献综述，并控制批量任务成本。
+- [ ] 支持批量上传、arXiv ID、DOI、论文 URL 和远程 PDF，并为每篇论文建立独立索引与分析状态。
+- [ ] 统一抽取研究问题、数据集、方法、基线、指标、结果和局限，生成可比较的结构化表示。
+- [ ] 提供论文对比矩阵、共同点与差异、结果冲突、方法演进和适用场景分析。
+- [ ] 支持跨论文证据检索，所有比较结论标注来源论文、页码和 evidence ID。
+- [ ] 在对比基础上生成相关工作、研究脉络、研究空白和初步文献综述，并控制批量任务成本。
 
 ### Phase H：文档解析增强
 
-- 增加 OCR 和扫描件支持，处理多栏排版、页眉页脚、断词、乱码和阅读顺序问题。
-- 可靠抽取标题、作者、摘要、章节、参考文献、脚注、页码和 DOI/arXiv 等标识符。
-- 增加表格、公式、图像与图注理解，并保留其在原始 PDF 中的位置和引用关系。
-- 使用版面感知分块和章节层次结构替代纯字符窗口，改善证据边界和上下文完整性。
-- 建立不同出版社、语言、排版和扫描质量的解析测试集，量化文本、结构与元数据准确率。
+- [ ] 增加 OCR 和扫描件支持，处理多栏排版、页眉页脚、断词、乱码和阅读顺序问题。
+- [ ] 可靠抽取标题、作者、摘要、章节、参考文献、脚注、页码和 DOI/arXiv 等标识符。
+- [ ] 增加表格、公式、图像与图注理解，并保留其在原始 PDF 中的位置和引用关系。
+- [ ] 使用版面感知分块和章节层次结构替代纯字符窗口，改善证据边界和上下文完整性。
+- [ ] 建立不同出版社、语言、排版和扫描质量的解析测试集，量化文本、结构与元数据准确率。
 
 ### Phase I：部署与工程化
 
-- 提供前后端、Worker、PostgreSQL 和 Redis 的 Dockerfile 与 Docker Compose 一键部署方案。
-- 建立 CI 流程，执行后端测试、Ruff、类型检查、前端 lint/build、依赖审计和镜像构建。
-- 增加开发、测试、生产环境配置，使用 Secret 管理 API Key，并提供数据库迁移和备份方案。
-- 增加认证、权限隔离、速率限制、用户配额、审计日志、CORS 和安全响应头配置。
-- 接入健康探针、结构化日志、Metrics、Tracing、错误告警及 token、延迟和成本看板。
-- 完善反向代理、HTTPS、水平扩容、Worker 并发、优雅停机、数据保留和部署运维文档。
+- [ ] 提供前后端、Worker、PostgreSQL 和 Redis 的 Dockerfile 与 Docker Compose 一键部署方案。
+- [ ] 建立 CI 流程，执行后端测试、Ruff、类型检查、前端 lint/build、依赖审计和镜像构建。
+- [ ] 增加开发、测试、生产环境配置，使用 Secret 管理 API Key，并提供数据库迁移和备份方案。
+- [ ] 增加认证、权限隔离、速率限制、用户配额、审计日志、CORS 和安全响应头配置。
+- [ ] 接入健康探针、结构化日志、Metrics、Tracing、错误告警及 token、延迟和成本看板。
+- [ ] 完善反向代理、HTTPS、水平扩容、Worker 并发、优雅停机、数据保留和部署运维文档。
 
 ---
 
 ## ⚠️ 已知限制
 
 - 当前仅支持本地上传的文本型 PDF；扫描件和复杂排版可能无法正确解析。
-- 标题、作者、摘要和章节等元数据识别仍较基础，可能显示为 Unknown。
+- 元数据依次使用 PDF metadata、首页版面和文本规则抽取，并记录来源与置信度；复杂排版仍可能显示“未识别”。
 - Orchestrator 串行执行，尚未实现并行 Agent 或可恢复任务图。
 - `NumpyVectorStore` 仍只存在进程内；任务元数据已持久化到 SQLite，但向量索引不会随任务保存。
 - 后台任务由 FastAPI `BackgroundTasks` 在 API 进程中执行，不是可靠的异步任务队列。
 - 服务重启后历史任务仍可查询，但执行中的任务会标记为中断失败；已写入磁盘但未登记到数据库的旧报告和 state 文件不会自动导入。
 - 同步接口会阻塞到分析结束，后台接口同样会消耗 API 进程计算资源。
-- 当前没有上传大小限制、任务取消、用户认证、权限控制、限流或持久化队列。
+- 默认上传上限为 50 MiB，终态任务文件保留 30 天；任务支持阶段边界取消、失败/取消后重试和活动任务去重。
+- 当前仍没有用户认证、权限控制、限流或持久化队列；执行中的单次模型 HTTP 请求不会被强制中断。
 - Mock Embedding 不具备真实语义检索能力，Mock Agent 输出也不代表真实论文内容。
 - Prompt 模板变量必须与对应 Agent 的渲染参数匹配，否则模板加载会失败。
 - 结构化重试只解决 JSON 格式或 Schema 校验问题，不能代替网络超时和服务限流重试。

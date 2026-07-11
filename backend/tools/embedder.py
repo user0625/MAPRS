@@ -8,6 +8,7 @@ import numpy as np
 from pydantic import BaseModel, Field, field_validator
 
 from backend.schemas.paper import PaperChunk
+from backend.core.request_policy import RequestPolicy, RequestPolicyError
 
 
 class EmbeddingError(Exception):
@@ -163,7 +164,8 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
     it can be used with openai, qwen-compatible apis, or other compatible services as long as they support the embedding endpoint.
   """
   #text-embedding-v4 每次最多接受 10 条输入。
-  def __init__(self, api_key:str, model_name:str, base_url:str|None=None, batch_size:int=8) -> None:
+  def __init__(self, api_key:str, model_name:str, base_url:str|None=None, batch_size:int=8,
+               request_policy: RequestPolicy | None = None, timeout: tuple[float, float] | None = None) -> None:
     if not api_key.strip():
       raise ValueError("api_key cannot be empty")
     
@@ -180,7 +182,8 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
     
     self.model_name = model_name
     self.batch_size = batch_size
-    self.client = OpenAI(api_key=api_key, base_url=base_url)
+    self.client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0, timeout=timeout)
+    self.request_policy = request_policy
   
   def embed_text(self, text:str) -> list[float]:
     vectors = self.embed_texts([text])
@@ -198,10 +201,11 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
       batch = cleaned_texts[start:start+self.batch_size]
 
       try:
-        response = self.client.embeddings.create(
-          model=self.model_name,
-          input=batch
-        )
+        def operation():
+          return self.client.embeddings.create(model=self.model_name, input=batch)
+        response = self.request_policy.call(operation) if self.request_policy else operation()
+      except RequestPolicyError as exc:
+        raise EmbeddingError(str(exc)) from exc
       except Exception as exc:
         raise EmbeddingError(
           f"failed to call embedding api: {type(exc).__name__}: {exc}"
@@ -211,5 +215,3 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
       all_vectors.extend(batch_vectors)
     
     return all_vectors
-
-

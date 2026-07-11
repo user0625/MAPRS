@@ -5,6 +5,7 @@ import type {
   TaskStatusResponse,
   TaskDetailResponse,
   TaskListResponse,
+  ReportConfiguration,
 } from '../types/api'
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000'
@@ -39,16 +40,25 @@ export function createAnalysisTask(
   file: File,
   query: string,
   language: OutputLanguage,
+  configuration: ReportConfiguration,
 ): Promise<TaskCreateResponse> {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('query', query)
   formData.append('language', language)
+  formData.append('analysis_depth', configuration.analysis_depth)
+  formData.append('target_audience', configuration.target_audience)
+  formData.append('report_template', configuration.report_template)
+  formData.append('custom_sections', JSON.stringify(configuration.custom_sections))
 
   return requestJson<TaskCreateResponse>(`${API_BASE_URL}/api/tasks/analyze`, {
     method: 'POST',
     body: formData,
   })
+}
+
+export function artifactUrl(taskId: string, format: 'markdown' | 'json' | 'html' | 'pdf' | 'docx'): string {
+  return `${API_BASE_URL}/api/tasks/${taskId}/artifacts/${format}`
 }
 
 export function getTaskStatus(taskId: string): Promise<TaskStatusResponse> {
@@ -66,4 +76,12 @@ export function listTasks(limit = 20, offset = 0): Promise<TaskListResponse> {
 
 export function getTaskDetail(taskId: string): Promise<TaskDetailResponse> {
   return requestJson<TaskDetailResponse>(`${API_BASE_URL}/api/tasks/${taskId}/detail`)
+}
+
+export function cancelTask(taskId: string): Promise<TaskStatusResponse> {
+  return requestJson<TaskStatusResponse>(`${API_BASE_URL}/api/tasks/${taskId}/cancel`, { method: 'POST' })
+}
+
+export function retryTask(taskId: string): Promise<TaskCreateResponse> {
+  return requestJson<TaskCreateResponse>(`${API_BASE_URL}/api/tasks/${taskId}/retry`, { method: 'POST' })
 }

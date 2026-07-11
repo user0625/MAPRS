@@ -37,6 +37,20 @@ class WriterAgent(BaseAgent):
       temperature=0.1,
     )
 
+  def revise(self, agent_input: WriterInput, report: FinalReport,
+             instructions: list[str]) -> FinalReport:
+    """Perform the single quality-gate revision without rereading the PDF."""
+    if self.is_mock or not instructions:
+      return report
+    allowed_ids = agent_input.evidence_bundle.evidence_ids() if agent_input.evidence_bundle else []
+    prompt = self.prompt_loader.render("writer_revision_user.md",
+      report=report.model_dump(mode="json"), instructions=instructions,
+      allowed_evidence_ids=allowed_ids,
+      schema_instruction=self.build_schema_instruction(FinalReport))
+    system = self._build_system_prompt(agent_input.output_language)
+    return self.generate_pydantic(prompt, FinalReport, system_prompt=system,
+                                  temperature=0.0, max_tokens=5000)
+
   def _run_mock(self, agent_input: WriterInput) -> FinalReport:
     """
     Return deterministic mock report for tests and local development.
@@ -61,6 +75,22 @@ class WriterAgent(BaseAgent):
       )
       title = "Paper Reading Report"
 
+    if agent_input.analysis_depth == "quick":
+      sections = sections[:4]
+    if agent_input.report_template == "review":
+      keep = ("TL;DR", "贡献", "局限", "strength", "limitation", "contribution")
+      selected = [section for section in sections if any(word.lower() in section.title.lower() for word in keep)]
+      sections = selected or sections
+    elif agent_input.report_template == "reproducibility":
+      keep = ("方法", "实验", "复现", "method", "experiment", "reproduc")
+      selected = [section for section in sections if any(word.lower() in section.title.lower() for word in keep)]
+      sections = selected or sections
+    for title_text in agent_input.custom_sections:
+      sections.append(ReportSection(title=title_text,
+        content="该自定义章节需结合所提供证据进一步核对。" if agent_input.output_language == "zh"
+        else "This custom section should be checked against the cited evidence.",
+        order=len(sections) + 1))
+
     report = FinalReport(
       title=title,
       paper_title=paper_title,
@@ -71,6 +101,9 @@ class WriterAgent(BaseAgent):
         "output_language": agent_input.output_language,
         "generated_by": self.name,
         "mode": agent_input.analysis_plan.mode,
+        "analysis_depth": agent_input.analysis_depth,
+        "target_audience": agent_input.target_audience,
+        "report_template": agent_input.report_template,
       },
     )
 

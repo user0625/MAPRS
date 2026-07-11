@@ -10,6 +10,32 @@ from backend.api.routes.tasks import router as tasks_router
 from backend.api import task_store as task_store_module
 from backend.api.task_store import DatabaseTaskStore
 from backend.core.config import get_settings
+import re
+import uuid
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+class RequestIDMiddleware:
+  def __init__(self, app: ASGIApp) -> None:
+    self.app = app
+
+  async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+    if scope["type"] != "http":
+      await self.app(scope, receive, send)
+      return
+    headers = dict(scope.get("headers", []))
+    supplied = headers.get(b"x-request-id", b"").decode("ascii", "ignore")
+    request_id = supplied if re.fullmatch(r"[A-Za-z0-9._-]{1,128}", supplied) else uuid.uuid4().hex
+    scope.setdefault("state", {})["request_id"] = request_id
+    async def send_with_id(message: Message) -> None:
+      if message["type"] == "http.response.start":
+        message.setdefault("headers", []).append((b"x-request-id", request_id.encode()))
+      await send(message)
+    await self.app(scope, receive, send_with_id)
 
 
 def create_app() -> FastAPI:
@@ -25,6 +51,7 @@ def create_app() -> FastAPI:
   async def lifespan(_: FastAPI):
     store.create_tables()
     store.recover_interrupted_tasks()
+    store.cleanup_expired_files(settings.file_retention_days)
     yield
 
   app = FastAPI(
@@ -48,6 +75,19 @@ def create_app() -> FastAPI:
     allow_methods = ["*"],
     allow_headers = ["*"],
   )
+
+  app.add_middleware(RequestIDMiddleware)
+
+  @app.exception_handler(StarletteHTTPException)
+  async def http_error(request: Request, exc: StarletteHTTPException):
+    codes = {400: "validation", 404: "not_found", 409: "conflict", 413: "validation"}
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc.detail),
+      "code": codes.get(exc.status_code, "workflow"), "request_id": request.state.request_id})
+
+  @app.exception_handler(RequestValidationError)
+  async def validation_error(request: Request, _: RequestValidationError):
+    return JSONResponse(status_code=422, content={"detail": "Request validation failed.",
+      "code": "validation", "request_id": request.state.request_id})
 
   app.include_router(health_router)
   app.include_router(analysis_router)

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { getTaskDetail, listTasks } from '../api/paperApi'
+import { artifactUrl, cancelTask, getTaskDetail, listTasks, retryTask } from '../api/paperApi'
 import type { TaskDetailResponse, TaskStatus, TaskStatusResponse } from '../types/api'
+import { ReportActions } from './ReportActions'
 
 const PAGE_SIZE = 3
 const POLL_INTERVAL_MS = 3000
@@ -27,6 +28,7 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [actionPending, setActionPending] = useState(false)
 
   const loadList = useCallback(async () => {
     setLoading(true)
@@ -70,6 +72,21 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
 
   const authors = detail?.paper_authors?.length ? detail.paper_authors :
     (Array.isArray(detail?.metadata.paper_authors) ? detail.metadata.paper_authors.filter((author): author is string => typeof author === 'string') : [])
+  const quality = (detail?.metadata.quality_evaluation || detail?.workflow_metadata.quality_evaluation || {}) as Record<string, unknown>
+  const metadataQuality = (detail?.metadata.metadata_quality || detail?.workflow_metadata.metadata_quality || {}) as Record<string, { source?: string, confidence?: number }>
+  const paperSections = (detail?.metadata.paper_sections || detail?.workflow_metadata.paper_sections || []) as Array<{ name?: string, page_start?: number, page_end?: number }>
+
+  const runAction = async (action: 'cancel' | 'retry') => {
+    if (!detail) return
+    setActionPending(true); setError(null)
+    try {
+      const response = action === 'cancel' ? await cancelTask(detail.task_id) : await retryTask(detail.task_id)
+      if (action === 'retry') setSelectedId(response.task_id)
+      else setDetail(await getTaskDetail(response.task_id))
+      await loadList()
+    } catch (cause) { setError(cause instanceof Error ? cause.message : `Could not ${action} task.`) }
+    finally { setActionPending(false) }
+  }
 
   return <div className="history-layout">
     <div className="history-top">
@@ -85,7 +102,7 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
     <section className="history-detail">
       {!selectedId ? <div className="panel detail-empty">Select a task to see its complete details.</div> : detailLoading && !detail ? <div className="panel detail-empty">Loading details…</div> : detail && <>
         <div className="panel detail-card">
-          <div className="detail-title"><div><span className="eyebrow">Analysis detail</span><h2>{taskName(detail)}</h2></div><StatusBadge status={detail.status} /></div>
+          <div className="detail-title"><div><span className="eyebrow">Analysis detail</span><h2>{taskName(detail)}</h2></div><div className="detail-actions"><StatusBadge status={detail.status} />{(detail.status === 'pending' || detail.status === 'running') && <button disabled={actionPending} onClick={() => void runAction('cancel')}>{actionPending ? 'Canceling…' : 'Cancel'}</button>}{(detail.status === 'failed' || detail.status === 'canceled') && <button disabled={actionPending} onClick={() => void runAction('retry')}>{actionPending ? 'Retrying…' : 'Retry'}</button>}</div></div>
           {detail.error_message && <div className="error-message"><strong>Task failed</strong>{detail.error_message}</div>}
           <dl className="detail-fields">
             <div className="wide"><dt>Paper title</dt><dd>{detail.paper_title || '—'}</dd></div>
@@ -94,7 +111,11 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
             <div><dt>Original file</dt><dd>{String(detail.metadata.original_filename || '—')}</dd></div><div><dt>Language</dt><dd>{String(detail.metadata.language || '—')}</dd></div>
             <div className="wide"><dt>Query</dt><dd>{String(detail.metadata.query || '—')}</dd></div>
             <div><dt>Created</dt><dd>{formatDate(detail.created_at)}</dd></div><div><dt>Updated</dt><dd>{formatDate(detail.updated_at)}</dd></div><div><dt>Completed</dt><dd>{formatDate(detail.completed_at)}</dd></div>
+            <div><dt>Prompt set</dt><dd>{String(detail.workflow_metadata.prompt_set_version || detail.metadata.prompt_set_version || '—')}</dd></div><div><dt>Structured calls</dt><dd>{String((detail.workflow_metadata.structured_output_stats as Record<string, unknown> | undefined)?.total_calls || '—')}</dd></div>
           </dl>
+          {Object.keys(metadataQuality).length > 0 && <div className="phase-d-details"><h3>Metadata provenance</h3><ul>{Object.entries(metadataQuality).map(([name, field]) => <li key={name}><strong>{name}</strong>: {field.source || 'unidentified'} · {typeof field.confidence === 'number' ? `${Math.round(field.confidence * 100)}%` : '—'}</li>)}</ul></div>}
+          {paperSections.length > 0 && <div className="phase-d-details"><h3>Detected sections</h3><ol>{paperSections.map((section, index) => <li key={`${section.name}-${index}`}>{section.name || 'Unidentified'} <small>pp. {section.page_start}–{section.page_end}</small></li>)}</ol></div>}
+          {Object.keys(quality).length > 0 && <div className={`quality-card ${quality.passed ? 'passed' : 'warning'}`}><h3>Report quality · {String(quality.overall || 0)}/100</h3><div>{['accuracy','completeness','faithfulness','citation_validity','critical_depth'].map(key => <span key={key}>{key.replace('_', ' ')} <strong>{String(quality[key] ?? '—')}</strong></span>)}</div><p>Citation coverage: {typeof quality.citation_coverage === 'number' ? `${Math.round(quality.citation_coverage * 100)}%` : '—'} · Revisions: {String(quality.revision_count ?? 0)}</p></div>}
         </div>
       </>}
     </section>
@@ -104,7 +125,7 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
           {!detail.state_available ? <p className="missing-note">Workflow state file is unavailable. Task metadata is still preserved.</p> : !detail.step_history?.length ? <p className="missing-note">No workflow steps were recorded.</p> :
             <ol className="timeline">{detail.step_history.map((step, index) => <li key={`${step.step_name}-${index}`}><span className={`step-dot step-${step.status}`} /><div><div><strong>{step.step_name}</strong><time>{formatDate(step.timestamp)}</time></div><small>{step.status}</small>{step.message && <p>{step.message}</p>}{Object.keys(step.metadata).length > 0 && <pre>{JSON.stringify(step.metadata, null, 2)}</pre>}</div></li>)}</ol>}
         </div></details>
-        <details className="panel collapsible-card history-report" open><summary><h3>Report</h3><span aria-hidden="true" /></summary><div className="collapsible-content">{detail.report_available && detail.report_markdown ? <div className="markdown-body"><ReactMarkdown>{detail.report_markdown}</ReactMarkdown></div> : <p className="missing-note">{detail.status === 'completed' ? 'The report file is unavailable.' : 'The report will appear after this task completes.'}</p>}</div></details>
+        <details className="panel collapsible-card history-report" open><summary><h3>Report</h3><span aria-hidden="true" /></summary><div className="collapsible-content">{detail.report_available && detail.report_markdown ? <><div className="history-report-actions"><ReportActions markdown={detail.report_markdown} filename={`${detail.task_id}-report.md`} />{(['markdown','json','html','pdf','docx'] as const).map(format => <a className="artifact-link" key={format} href={artifactUrl(detail.task_id, format)}>{format.toUpperCase()}</a>)}</div><div className="markdown-body"><ReactMarkdown>{detail.report_markdown}</ReactMarkdown></div></> : <p className="missing-note">{detail.status === 'completed' ? 'The report file is unavailable.' : 'The report will appear after this task completes.'}</p>}</div></details>
     </section>}
   </div>
 }

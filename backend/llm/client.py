@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import json
+import logging
+import hashlib
 
 from abc import ABC, abstractmethod
 
@@ -9,7 +10,10 @@ from typing import Any, Literal, TypeVar
 from pydantic import BaseModel, Field, field_validator, ValidationError
 
 from backend.core.config import AppSettings
+from backend.core.request_policy import RequestPolicy, RequestPolicyError
 from backend.llm.json_parser import JSONParseError, parse_json_object
+
+logger = logging.getLogger(__name__)
 
 class LLMError(Exception):
 
@@ -62,6 +66,13 @@ class BaseLLMClient(ABC):
   """
   model_name: str
   provider: str
+  structured_output_stats: dict[str, Any]
+
+  def _ensure_stats(self) -> dict[str, Any]:
+    if not hasattr(self, "structured_output_stats"):
+      self.structured_output_stats = {"total_calls": 0, "first_attempt_successes": 0,
+                                      "retried_calls": 0, "final_failures": 0, "by_schema": {}}
+    return self.structured_output_stats
 
   @abstractmethod
   def generate( self, messages: list[LLMMessage], temperature: float = 0.2, max_tokens: int | None = None,) -> LLMResponse:
@@ -116,10 +127,15 @@ class BaseLLMClient(ABC):
       if parsing or validation fails, retry with error feedback.
     """
 
+    stats = self._ensure_stats()
+    stats["total_calls"] += 1
+    schema_stats = stats["by_schema"].setdefault(output_schema.__name__, {"calls": 0, "attempts": 0, "successes": 0, "failures": 0})
+    schema_stats["calls"] += 1
     current_prompt = prompt
     last_error:Exception|None = None
 
     for attempt in range(max_retries + 1):
+      schema_stats["attempts"] += 1
       try:
         data = self.generate_json(
         prompt=current_prompt,
@@ -128,18 +144,38 @@ class BaseLLMClient(ABC):
         max_tokens=max_tokens,
         )
 
-        return output_schema.model_validate(data)
+        result = output_schema.model_validate(data)
+        schema_stats["successes"] += 1
+        if attempt == 0:
+          stats["first_attempt_successes"] += 1
+        else:
+          stats["retried_calls"] += 1
+        return result
       except (LLMError, ValidationError, ValueError) as exc:
         last_error = exc
         if attempt >= max_retries:
+          stats["final_failures"] += 1
+          schema_stats["failures"] += 1
+          error_kind = self._classify_structured_output_error(exc)
           raise LLMError(
-            f"Failed to generate valid {output_schema.__name__}"
-            f"After {max_retries +1} attempts. last error: {exc}"
+            f"{error_kind} for {output_schema.__name__} after "
+            f"{max_retries + 1} attempts. Last error: {exc}"
           ) from exc
         current_prompt = self._build_retry_prompt(original_prompt=prompt, output_schema=output_schema, error_message=str(exc))
     raise LLMError(
       f"Failed to generate valid {output_schema.__name__}"
     ) from last_error
+
+  @staticmethod
+  def _classify_structured_output_error(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+      return "Schema validation failed"
+    if isinstance(exc, LLMError):
+      if str(exc).startswith("Failed to call"):
+        return "LLM API call failed"
+      if str(exc).startswith("Failed to parse"):
+        return "JSON parsing failed"
+    return "Structured output generation failed"
       
     
   def _build_retry_prompt(self, original_prompt: str, output_schema: type[BaseModel], error_message: str,) -> str:
@@ -171,7 +207,11 @@ class BaseLLMClient(ABC):
     try:
       return parse_json_object(content)
     except JSONParseError as exc:
-      raise LLMError(f"Failed to parse LLM reponse as JSON: {content}") from exc
+      logger.error("Failed to parse LLM JSON response", extra={
+        "error_code": "json_parse", "response_length": len(content),
+        "response_sha256": hashlib.sha256(content.encode()).hexdigest()[:12],
+      })
+      raise LLMError("Failed to parse LLM response as JSON.") from exc
   # def _parse_json_response(self, content: str) -> dict[str, Any]:
   #   """
   #     Parse JSON response.
@@ -284,7 +324,9 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
     self.client = OpenAI(
       api_key=api_key,
       base_url=base_url,
+      max_retries=0,
     )
+    self.request_policy: RequestPolicy | None = None
 
   def generate(self, messages: list[LLMMessage], temperature: float = 0.2, max_tokens: int | None = None,) -> LLMResponse:
     if not messages:
@@ -308,7 +350,11 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
       kwargs["max_tokens"] = max_tokens
 
     try:
-      response = self.client.chat.completions.create(**kwargs)
+      def operation():
+        return self.client.chat.completions.create(**kwargs)
+      response = self.request_policy.call(operation) if self.request_policy else operation()
+    except RequestPolicyError as exc:
+      raise LLMError(str(exc)) from exc
     except Exception as exc:
       raise LLMError("Failed to call OpenAI-compatible chat API.") from exc
 
@@ -344,10 +390,15 @@ def create_llm_client(settings: AppSettings) -> BaseLLMClient:
   if settings.llm_provider == "openai_compatible":
     if not settings.llm_api_key:
       raise ValueError("llm_api_key is required for openai_compatible provider.")
-    return OpenAICompatibleLLMClient(
+    client = OpenAICompatibleLLMClient(
       api_key=settings.llm_api_key,
       base_url=settings.llm_base_url,
       model_name=settings.llm_model,
       provider=settings.llm_vendor,
     )
+    client.client = client.client.with_options(
+      timeout=(settings.request_connect_timeout, settings.request_read_timeout), max_retries=0
+    )
+    client.request_policy = RequestPolicy.from_settings(settings)
+    return client
   raise ValueError(f"Unsupported llm_provider: {settings.llm_provider}")

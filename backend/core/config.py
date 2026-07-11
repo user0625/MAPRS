@@ -60,6 +60,27 @@ class AppSettings(BaseSettings):
     chunk_size: int = Field(default=1200, ge=100)
     chunk_overlap: int = Field(default=150, ge=0)
 
+    # External request policy
+    request_connect_timeout: float = Field(default=10.0, gt=0, le=300)
+    request_read_timeout: float = Field(default=60.0, gt=0, le=600)
+    request_total_budget: float = Field(default=120.0, gt=0, le=1800)
+    request_max_retries: int = Field(default=2, ge=0, le=10)
+    request_backoff_base: float = Field(default=1.0, ge=0, le=60)
+    request_backoff_max: float = Field(default=8.0, ge=0, le=300)
+
+    # Uploads and lifecycle
+    max_upload_bytes: int = Field(default=50 * 1024 * 1024, ge=1024, le=1024**3)
+    file_retention_days: int = Field(default=30, ge=0, le=3650)
+    prompt_set_version: str = Field(default="v1", min_length=1, max_length=64)
+
+    # Phase D report quality
+    hierarchical_page_threshold: int = Field(default=20, ge=1, le=10000)
+    hierarchical_char_threshold: int = Field(default=60000, ge=1000, le=100000000)
+    verifier_enabled: bool = True
+    quality_pass_score: int = Field(default=75, ge=0, le=100)
+    citation_validity_min_score: int = Field(default=80, ge=0, le=100)
+    max_custom_sections: int = Field(default=20, ge=1, le=50)
+
     @field_validator(
         "project_root",
         "data_dir",

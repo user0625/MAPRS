@@ -34,7 +34,7 @@ class DocumentChunker:
 
   def __init__(self, chunk_size:int = 1200, chunk_overlap:int = 150,) -> None:
     self.config = ChunkingConfig(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-  
+
   def chunk(self, document:PaperDocument) -> PaperDocument:
     """
       chunk a PaperDocument and return the same document with chunks filled.
@@ -54,13 +54,16 @@ class DocumentChunker:
     
     chunks:list[PaperChunk] = []
     for page in document.pages:
-      page_chunks = self._chunk_page(page=page, paper_id=document.metadata.paper_id)
+      section = next((s.name for s in document.sections
+                      if s.page_start and s.page_end and s.page_start <= page.page_number <= s.page_end), None)
+      page_chunks = self._chunk_page(page=page, paper_id=document.metadata.paper_id, section=section)
       chunks.extend(page_chunks)
     
     document.chunks = chunks
     return document
   
-  def _chunk_page(self, page:PaperPage, paper_id:str|None = None) -> list[PaperChunk]:
+  def _chunk_page(self, page:PaperPage, paper_id:str|None = None,
+                  section: str | None = None) -> list[PaperChunk]:
     """split one page into chunks"""
 
     text = self._normalize_text(page.text)
@@ -80,7 +83,7 @@ class DocumentChunker:
           text=chunk_text,
           page_start=page.page_number,
           page_end=page.page_number,
-          section=None,
+          section=section,
           char_start=char_start,
           char_end=char_end
         )
@@ -143,4 +146,3 @@ class DocumentChunker:
     """
 
     return text.replace("\x00", "").strip()
-  

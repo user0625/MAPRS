@@ -13,6 +13,24 @@ class ReportFormat(str, Enum):
   HTML = "html"
 
 
+class ReportClaim(BaseModel):
+  text: str = Field(..., min_length=1)
+  evidence_ids: list[str] = Field(default_factory=list)
+
+
+class QualitySummary(BaseModel):
+  accuracy: int = Field(default=0, ge=0, le=100)
+  completeness: int = Field(default=0, ge=0, le=100)
+  faithfulness: int = Field(default=0, ge=0, le=100)
+  citation_validity: int = Field(default=0, ge=0, le=100)
+  critical_depth: int = Field(default=0, ge=0, le=100)
+  overall: int = Field(default=0, ge=0, le=100)
+  passed: bool = False
+  citation_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+  revision_count: int = Field(default=0, ge=0, le=1)
+  issues: list[str] = Field(default_factory=list)
+
+
 class ReportSection(BaseModel):
   """
     A structured section in the final report
@@ -24,6 +42,7 @@ class ReportSection(BaseModel):
   content:str = Field(default="")
   order:int = Field(default=0, ge=0)
   evidence_ids:list[str] = Field(default_factory=list)
+  claims: list[ReportClaim] = Field(default_factory=list)
 
   @field_validator("title", "content")
   @classmethod
@@ -53,7 +72,7 @@ class ReportSection(BaseModel):
     markdown = f"{heading_prefix} {self.title}"
 
     if self.content:
-      markdown += f"{self.content}"
+      markdown += f"\n\n{self.content}"
 
     if self.evidence_ids:
       evidence_text = ", ".join(self.evidence_ids)
@@ -82,6 +101,8 @@ class FinalReport(BaseModel):
   )
 
   metadata:dict[str, Any] = Field(default_factory=dict)
+  quality_summary: QualitySummary | None = None
+  warning: str | None = None
 
   @field_validator("title", "paper_title", "output_path", "markdown_content")
   @classmethod
@@ -107,6 +128,9 @@ class FinalReport(BaseModel):
       return self.markdown_content.strip()
     
     lines:list[str] = [f"# {self.title}"]
+
+    if self.warning:
+      lines.extend(["", f"> ⚠️ {self.warning}"])
 
     if self.paper_title:
       lines.append("")

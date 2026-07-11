@@ -35,6 +35,8 @@ class AnalyzeUploadResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
   detail: str
+  code: str | None = None
+  request_id: str | None = None
 
 
 class AnalyzeLanguage(str):
@@ -52,6 +54,7 @@ class TaskCreateResponse(BaseModel):
     task_id: str
     status: APITaskStatus
     message: str
+    deduplicated: bool = False
 
 
 class TaskStatusResponse(BaseModel):

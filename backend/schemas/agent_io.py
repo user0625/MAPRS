@@ -306,3 +306,7 @@ class WriterInput(BaseModel):
   critic_notes: CriticNotes
   evidence_bundle: EvidenceBundle|None = None
   output_language: Literal["zh", "en"] = "zh"
+  analysis_depth: Literal["quick", "standard", "deep"] = "standard"
+  target_audience: Literal["general", "researcher", "reviewer"] = "researcher"
+  report_template: Literal["standard", "review", "reproducibility"] = "standard"
+  custom_sections: list[str] = Field(default_factory=list, max_length=20)

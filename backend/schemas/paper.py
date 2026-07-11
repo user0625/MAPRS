@@ -12,6 +12,31 @@ class SourceType(str, Enum):
   URL = "url"
 
 
+class MetadataSource(str, Enum):
+  PDF = "pdf_metadata"
+  OUTLINE = "pdf_outline"
+  LAYOUT = "page_layout"
+  TEXT = "text_pattern"
+  LLM = "llm"
+
+
+class MetadataField(BaseModel):
+  """Provenance for a parsed metadata value."""
+
+  value: Any = None
+  source: MetadataSource | str = MetadataSource.TEXT
+  confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class MetadataCandidate(BaseModel):
+  text: str
+  page: int = Field(default=1, ge=1)
+  bbox: tuple[float, float, float, float] | None = None
+  font_size: float | None = None
+  rotation: int = 0
+  kind: str = "text_block"
+
+
 class PaperInput(BaseModel):
   """
     User-provided paper input.
@@ -77,6 +102,21 @@ class PaperMetadata(BaseModel):
   total_pages:int | None = Field(default=None, ge=0)
   language:str | None = Field(default=None, description="检测或假定语言")
   keywords:list[str] = Field(default_factory=list)
+  fields: dict[str, MetadataField] = Field(default_factory=dict)
+  candidates: list[MetadataCandidate] = Field(default_factory=list)
+
+  def set_field(self, name: str, value: Any, source: MetadataSource | str,
+                confidence: float, *, replace_below: float = 0.7, force: bool = False) -> None:
+    """Merge a candidate while preserving reliable deterministic values."""
+    if value in (None, "", []):
+      return
+    current = self.fields.get(name)
+    current_value = getattr(self, name, None)
+    if (not force and current_value not in (None, "", []) and current
+        and current.confidence >= replace_below):
+      return
+    setattr(self, name, value)
+    self.fields[name] = MetadataField(value=value, source=source, confidence=confidence)
 
   @field_validator("title", "abstract", "venue", "doi", "arxiv_id", "source_path", "language")
   @classmethod
@@ -143,7 +183,7 @@ class PaperSection(BaseModel):
     if self.page_start is not None and self.page_end is not None:
       if self.page_end < self.page_start:
         raise ValueError("page end number must be greater than or equal to pagestart")
-      return self
+    return self
     
 
 class PaperChunk(BaseModel):
@@ -221,4 +261,3 @@ class PaperDocument(BaseModel):
 
    
    
-

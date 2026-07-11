@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import uuid
 from typing import Literal
 
@@ -12,6 +11,9 @@ from backend.core.orchestrator import create_default_orchestrator
 from backend.core.state import AnalysisStatus
 from backend.exporters.report_exporter import ReportExporter
 from backend.schemas.paper import PaperInput
+from backend.schemas.report_config import ReportConfiguration
+from pydantic import ValidationError
+from backend.api.uploads import UploadValidationError, save_validated_pdf
 
 router = APIRouter(
   prefix="/api/analyze",
@@ -24,16 +26,15 @@ def analyze_uploaded_pdf(
     file: UploadFile = File(...),
     query: str = Form("Analyze this paper and generate a structured reading report."),
     language: Literal["zh", "en"] = Form("zh"),
+    analysis_depth: str = Form("standard"),
+    target_audience: str = Form("researcher"),
+    report_template: str = Form("standard"),
+    custom_sections: str | None = Form(None),
 ) -> AnalyzeUploadResponse:
   """
     Upload a PDF paper and generate a structured reading report.
     This is a synchronous MVP endpoint.
   """
-  if not file.filename:
-    raise HTTPException(status_code=400, detail="Uploaded file has no filename.")
-  if not file.filename.lower().endswith(".pdf"):
-    raise HTTPException(status_code=400, detail="only PDF files has supported.")
-
   settings = get_settings()
 
   upload_dir = settings.resolve_path(settings.output_dir) / "uploads"
@@ -48,20 +49,29 @@ def analyze_uploaded_pdf(
   safe_pdf_path = upload_dir / f"{task_id}.pdf"
 
   try:
-    with safe_pdf_path.open("wb") as buffer:
-      shutil.copyfileobj(file.file, buffer)
-  except Exception:
-    raise HTTPException(status_code=500, detail="Failed to save uploaded PDF")
-  finally:
-    file.file.close()
+    save_validated_pdf(file, safe_pdf_path, settings.max_upload_bytes)
+  except UploadValidationError as exc:
+    raise HTTPException(status_code=400, detail=str(exc)) from exc
 
   orchestrator = create_default_orchestrator(settings)
+  try:
+    report_config = ReportConfiguration.from_form(analysis_depth, target_audience,
+                                                   report_template, custom_sections)
+  except (ValueError, ValidationError) as exc:
+    safe_pdf_path.unlink(missing_ok=True)
+    raise HTTPException(status_code=422, detail=str(exc)) from exc
 
   paper_input = PaperInput(source_type="pdf", source_path=str(safe_pdf_path), user_query=query)
 
-  state = orchestrator.run(paper_input=paper_input, output_language=language)
+  try:
+    state = orchestrator.run(paper_input=paper_input, output_language=language, task_id=task_id,
+                             report_configuration=report_config.model_dump(mode="json"))
+  except Exception:
+    safe_pdf_path.unlink(missing_ok=True)
+    raise
 
   if state.status != AnalysisStatus.COMPLETED :
+    safe_pdf_path.unlink(missing_ok=True)
     raise HTTPException(status_code=500, detail=state.error_message or "Paper analysis failed")
 
   if state.final_report is None:
@@ -71,13 +81,17 @@ def analyze_uploaded_pdf(
 
   report_path = report_dir / f"{task_id}_report.md"
   state_path = log_dir / f"{task_id}_state.json"
+  report_json_path = report_dir / f"{task_id}_report.json"
 
   exporter = ReportExporter()
-  exporter.save_all(state=state, report_md_path=report_path, state_json_path=state_path)
+  exporter.save_all(state=state, report_md_path=report_path, report_json_path=report_json_path,
+                    state_json_path=state_path)
 
   document = state.document
   evidence_bundle = state.evidence_bundle
   final_report = state.final_report
+
+  safe_pdf_path.unlink(missing_ok=True)
 
   return AnalyzeUploadResponse(
     task_id=task_id,
