@@ -13,6 +13,11 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读场景的全栈
 ## 📝 最近更新
 
 - `2026-07-12`
+  - 检索质量升级：BM25 与向量召回分别扩展到前 20 条候选，保留原始分数、排名和命中来源；改进中英文规范化、停用词及中文字符 bigram，并保证向量阈值不会删除 BM25 命中。
+  - Reranker 上线：新增 `disabled`、`shadow`、`enabled` 三种模式，支持阿里云 `qwen3-rerank` 的 `/reranks` 协议、独立 Evidence/answerability 阈值、稳定排序及超时异常自动降级。
+  - 质量评估：新增 candidate Recall@20、macro Precision@6、Recall@6、MRR、Evidence coverage、错误拒答率、平均返回数和分组指标；合成集继续用于 CI，生产阈值要求使用按论文隔离的真实验证集校准。
+  - PDF 兼容性：修复内嵌标题/作者 metadata 与首页布局候选同时存在时的类型不一致问题，原失败的 9 页测试论文已可解析出标题和 15 个章节。
+  - 验证：后端完整回归 `148 passed, 6 skipped`，新增 reranker 协议、双阈值、降级和 PDF metadata 专项测试，Ruff 检查通过。
   - Ask Paper：新增仅面向已完成单篇论文任务的独立问答工作区，支持多轮会话、全篇/章节范围、自动/中英文回答、Evidence 回溯和会话标题编辑。
   - 持久化流式恢复：问答消息、Evidence 和 token 事件写入数据库；Celery Worker 独立生成，浏览器刷新或断线后可按事件序号续传，且支持取消和失败重试。
   - CI 基线：GitHub Actions 在 push 与 pull request 上运行后端测试/Ruff、前端 lint/build、Compose 校验和前后端镜像构建；同分支旧任务自动取消，镜像仅构建不推送。
@@ -20,7 +25,7 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读场景的全栈
   - 容器化：新增 Node 20 + Nginx 前端生产镜像，Compose 统一启动 PostgreSQL、Redis、FastAPI、Celery Worker 与 Frontend。
   - 请求链路：浏览器统一访问 `http://localhost:3000`，Nginx 代理 `/api`、上传下载与无缓冲 SSE；FastAPI 的 `8000` 端口继续保留用于直接调试。
   - 工作区布局：新建分析页左右首个面板顶部对齐；Task History 桌面双栏固定为 560px，详情内部滚动，移动端恢复自然高度。
-  - 验证：五服务镜像构建、容器启动和主要功能测试通过；后端测试 `131 passed, 6 skipped`，前端 Vitest/build/lint、Playwright 桌面/移动端、Compose 配置与差异检查通过。
+  - 基础设施验证：五服务镜像构建、容器启动和主要功能测试通过；前端 Vitest/build/lint、Playwright 桌面/移动端、Compose 配置与差异检查通过。
 - `2026-07-11`
   - Phase A 稳定性：LLM 与 Embedding 统一超时/重试策略，支持 `Retry-After`、总请求预算和脱敏错误。
   - 任务控制：支持活动任务去重、阶段边界取消、失败/取消任务重试，以及终态文件定期清理。
