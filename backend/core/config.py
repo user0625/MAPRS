@@ -60,6 +60,11 @@ class AppSettings(BaseSettings):
     task_stale_after_seconds: int = Field(default=300, ge=30)
     checkpoint_schema_version: int = Field(default=1, ge=1)
     sse_heartbeat_seconds: int = Field(default=15, ge=1)
+    ask_candidate_count: int = Field(default=12, ge=1, le=100)
+    ask_evidence_count: int = Field(default=6, ge=1, le=50)
+    ask_rrf_k: int = Field(default=60, ge=1, le=1000)
+    ask_rewrite_max_tokens: int = Field(default=160, ge=16, le=512)
+    ask_retrieval_cache_size: int = Field(default=8, ge=1, le=128)
     celery_task_max_retries: int = Field(default=3, ge=0)
     celery_visibility_timeout: int = Field(default=3600, ge=60)
 

@@ -268,6 +268,20 @@ POST  /api/conversations/{conversation_id}/messages/{message_id}/retry
 
 SSE 事件包括 `token`、`completed`、`failed`、`canceled` 和 `heartbeat`。客户端可使用 `after` 或 `Last-Event-ID` 恢复；事件序号和最终消息正文都来自持久化存储。问答 Evidence ID 使用消息命名空间，并可通过现有 `GET /api/tasks/{task_id}/evidence/{evidence_id}` 查询。
 
+每次问答先用最近 6 条消息将追问改写为独立检索问题，再对所选章节执行 BM25 与向量双路候选召回，并用 RRF 融合。Mock Embedding 时只使用 BM25；真实 Embedding 建索引或查询失败时也会自动降级为 BM25。改写失败则确定性拼接最近用户问题与当前问题。默认配置如下，可通过同名环境变量覆盖：
+
+```dotenv
+ASK_CANDIDATE_COUNT=12
+ASK_EVIDENCE_COUNT=6
+ASK_RRF_K=60
+ASK_REWRITE_MAX_TOKENS=160
+ASK_RETRIEVAL_CACHE_SIZE=8
+```
+
+Worker 内索引缓存键包含任务、state 文件版本、章节及 Embedding provider/model，重启后从 state 重建。所有本次检索 Evidence 均保存为消息快照，但 `citation_ids` 只记录答案实际使用且属于本次白名单的 ID；非法和跨消息引用会从最终答案清除。无候选证据时不会调用回答生成模型。检索日志仅记录改写查询、分支状态、降级类型、候选数和融合分数，不记录论文全文或密钥。
+
+固定检索夹具的质量门槛为 Recall@6 ≥ 90%、章节跨界返回率 0%、非法引用保留率 0%、无答案拒答率 100%。
+
 数据库升级由 `backend/migrations/versions/0002_ask_paper.py` 提供。任务删除时会同步清理其全部问答数据。
 
 后台上传接口只接受 `.pdf`、`application/pdf` 或 `application/octet-stream`，并校验 `%PDF-` 文件头和大小。相同 SHA-256、标准化 query 与 language 的活动任务会复用原 `task_id`。取消在工作流阶段边界生效；重试仅适用于 `failed/canceled`，并创建通过 `retry_of` 关联的新任务。
@@ -324,7 +338,7 @@ RUN_REAL_LLM_TESTS=1 uv run pytest backend/tests/test_orchestrator_real.py -v -s
 
 已完成的基础能力包括 React Web UI、PostgreSQL/SQLite 持久化、Redis + Celery 任务队列、可恢复 SSE、结构化报告与 Evidence，以及单篇论文 Ask Paper。后续工作按优先级为：
 
-1. **检索与问答质量**：BM25/向量混合召回、Rerank、持久化向量库、检索评估集，以及 Ask Paper 忠实度、引用和 prompt-injection 专项回归。
+1. **检索与问答质量**：已完成 Ask Paper BM25/向量混合召回、RRF、改写降级、引用白名单和基础专项回归；后续增加 Rerank、持久化向量库及更大规模评估集。
 2. **文档理解**：OCR、复杂多栏版面、表格、公式、图片与图注，并保留可引用的位置关系。
 3. **Ask Paper 深化**：页码范围、会话搜索/删除/导出、更精细的上下文压缩和成本统计。
 4. **多论文研究**：批量/arXiv/DOI/URL 输入、跨论文证据检索、对比矩阵、研究脉络与文献综述。

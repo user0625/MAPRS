@@ -230,9 +230,15 @@ class AskStore:
             )
 
     def finish(
-        self, message_id: str, content: str, evidence: list[dict[str, Any]]
+        self,
+        message_id: str,
+        content: str,
+        evidence: list[dict[str, Any]],
+        citation_ids: list[str] | None = None,
     ) -> None:
-        citations = [item["evidence_id"] for item in evidence]
+        """Persist the retrieval snapshot separately from citations used in the answer."""
+        allowed = {item["evidence_id"] for item in evidence}
+        citations = list(dict.fromkeys(x for x in (citation_ids or []) if x in allowed))
         with Session(self.engine) as session:
             row = session.get(PaperMessage, message_id)
             if not row:
