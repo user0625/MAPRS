@@ -472,7 +472,7 @@ uv run pytest backend/tests -q -rs
 
 普通测试使用 Mock 客户端，不访问外部模型。真实模型测试默认跳过。
 
-当前锁定的 Starlette 1.3 已将 TestClient 桥接迁移到 `httpx2`，但开发环境仍只有旧 `httpx`，因此 `backend/tests/test_api_tasks.py` 会在首个请求处停滞。CI 暂时显式排除该文件，其余后端测试继续作为必过检查；待 `httpx2` 纳入锁文件后应立即恢复 API 测试。前端 Vitest/Playwright 测试同样需要先安装对应 npm 开发依赖和浏览器。
+当前锁定的 Starlette 1.3 TestClient 在首个请求处仍会停滞；即使加入 `httpx2` 后问题仍可复现。CI 暂时显式排除 `backend/tests/test_api_tasks.py`，其余后端测试继续作为必过检查。前端使用 Vitest、Testing Library 和 jsdom 覆盖交互报告的目录、搜索复原、Evidence 缓存、错误重试及任务切换状态清理；Playwright 已作为开发依赖安装，浏览器级用例将在测试入口具备稳定数据注入方式后启用。
 
 显式运行真实模型 smoke test：
 

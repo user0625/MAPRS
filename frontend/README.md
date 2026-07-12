@@ -53,7 +53,7 @@ npm run build
 npm run lint
 ```
 
-交互报告已实现当前章节跟随、`aria-current` 状态、搜索结果播报，以及 Evidence 抽屉的 Escape/Tab 焦点管理。计划中的 Vitest/Testing Library 与 Playwright 回归测试需要先安装 npm 测试依赖；在依赖尚未写入 lockfile 前，CI 继续以 TypeScript build 和 lint 为前端基线。
+交互报告已实现当前章节跟随、`aria-current` 状态、搜索结果播报，以及 Evidence 抽屉的 Escape/Tab 焦点管理。Vitest、Testing Library 和 jsdom 回归测试可通过 `npm test` 运行，并已纳入 CI；Playwright 已安装，待测试入口具备稳定数据注入方式后补充浏览器级布局回归。
 
 构建会先执行 TypeScript 项目检查，再由 Vite 生成 `dist/` 生产资源。完整交付检查还包括仓库根目录的 `docker compose config --quiet` 和 `git diff --check`。
 # Browser behavior
