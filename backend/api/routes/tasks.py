@@ -459,7 +459,7 @@ def get_structured_report(task_id: str) -> StructuredReportResponse:
 
 
 @router.get("/{task_id}/evidence/{evidence_id}", response_model=EvidenceResponse)
-def get_evidence(task_id: str, evidence_id: str) -> EvidenceResponse:
+async def get_evidence(task_id: str, evidence_id: str) -> EvidenceResponse:
     record, state = _completed_state(task_id)
     items = state.get("evidence_bundle", {}).get("items", [])
     for item in items:

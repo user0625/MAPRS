@@ -55,7 +55,7 @@ def conversation_or_404(conversation_id: str):
     response_model=ConversationResponse,
     status_code=201,
 )
-def create_conversation(task_id: str, body: ConversationCreate) -> ConversationResponse:
+async def create_conversation(task_id: str, body: ConversationCreate) -> ConversationResponse:
     completed_task(task_id)
     _, ask = stores()
     return ConversationResponse.model_validate(
@@ -67,7 +67,7 @@ def create_conversation(task_id: str, body: ConversationCreate) -> ConversationR
 @router.get(
     "/api/tasks/{task_id}/conversations", response_model=ConversationListResponse
 )
-def list_conversations(task_id: str) -> ConversationListResponse:
+async def list_conversations(task_id: str) -> ConversationListResponse:
     completed_task(task_id)
     _, ask = stores()
     return ConversationListResponse(
@@ -81,7 +81,7 @@ def list_conversations(task_id: str) -> ConversationListResponse:
 @router.get(
     "/api/conversations/{conversation_id}", response_model=ConversationDetailResponse
 )
-def get_conversation(
+async def get_conversation(
     conversation_id: str,
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -103,7 +103,7 @@ def get_conversation(
 @router.patch(
     "/api/conversations/{conversation_id}", response_model=ConversationResponse
 )
-def update_conversation(
+async def update_conversation(
     conversation_id: str, body: ConversationUpdate
 ) -> ConversationResponse:
     conversation_or_404(conversation_id)
@@ -129,7 +129,7 @@ def validate_section(task, section: str | None):
     response_model=AskAcceptedResponse,
     status_code=202,
 )
-def create_message(conversation_id: str, body: AskMessageCreate):
+async def create_message(conversation_id: str, body: AskMessageCreate):
     conv = conversation_or_404(conversation_id)
     task = completed_task(conv.task_id)
     validate_section(task, body.section)
@@ -151,7 +151,7 @@ def create_message(conversation_id: str, body: AskMessageCreate):
     "/api/conversations/{conversation_id}/messages/{message_id}/cancel",
     response_model=AskMessageResponse,
 )
-def cancel_message(conversation_id: str, message_id: str):
+async def cancel_message(conversation_id: str, message_id: str):
     conversation_or_404(conversation_id)
     _, ask = stores()
     row = ask.get_message(message_id)
@@ -169,7 +169,7 @@ def cancel_message(conversation_id: str, message_id: str):
     response_model=AskAcceptedResponse,
     status_code=202,
 )
-def retry_message(conversation_id: str, message_id: str):
+async def retry_message(conversation_id: str, message_id: str):
     conversation_or_404(conversation_id)
     _, ask = stores()
     source = ask.get_message(message_id)

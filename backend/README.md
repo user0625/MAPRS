@@ -300,6 +300,14 @@ uv run pytest backend/tests -q -rs
 
 普通测试使用 mock 客户端，不需要网络。真实测试默认被跳过。
 
+Ask Paper API 使用每个测试独立的临时 SQLite 与 state 文件，并以确定性 fake 替换 Worker 调度。专项覆盖任务/会话隔离、章节校验、分页、错误状态、Evidence 任务归属、取消/重试，以及 SSE `after`、`Last-Event-ID`、token 顺序和终态关闭：
+
+```bash
+uv run pytest backend/tests/test_api_ask_paper.py -q -rs
+```
+
+当前依赖组合中的 Starlette `TestClient` 在线程 portal 内执行同步端点时可能停滞，因此 Ask Paper HTTP 入口使用 async 路由，测试夹具通过 ASGI transport 发起请求；REST 与 SSE 协议保持不变。
+
 单独运行组件测试：
 
 ```bash

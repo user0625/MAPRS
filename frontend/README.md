@@ -52,11 +52,20 @@ FastAPI 仍暴露在 <http://localhost:8000>，便于绕过代理直接调试。
 ## 构建验证
 
 ```bash
+npm test
 npm run build
 npm run lint
+npm run test:e2e
 ```
 
-交互报告已实现当前章节跟随、`aria-current` 状态、搜索结果播报，以及 Evidence 抽屉的 Escape/Tab 焦点管理。Vitest、Testing Library 和 jsdom 回归测试可通过 `npm test` 运行，并已纳入 CI；Playwright 已安装，待测试入口具备稳定数据注入方式后补充浏览器级布局回归。
+Vitest、Testing Library 和 jsdom 覆盖交互报告与 Ask Paper 流式 hook。流测试验证 SSE CRLF 解码、重复事件去重、按最后 cursor 和 `Last-Event-ID` 重连，以及切换会话时中止旧消费器。
+
+Playwright 使用 route interception 提供确定性的任务、会话、Evidence 和 SSE 数据，不依赖真实后端、LLM、Redis 或 Celery。`npm run test:e2e` 会自动启动独立 Vite 服务，并运行桌面 Chromium 与 Pixel 7 移动端项目；失败时保留截图、视频和 trace。fixture 仅拦截 URL 根路径下的 `/api/`，避免误拦截 Vite 的 `/src/api/` 源码模块。首次运行前如缺少浏览器或系统依赖，可执行：
+
+```bash
+npx playwright install chromium
+sudo npx playwright install-deps chromium
+```
 
 构建会先执行 TypeScript 项目检查，再由 Vite 生成 `dist/` 生产资源。完整交付检查还包括仓库根目录的 `docker compose config --quiet` 和 `git diff --check`。
 # Browser behavior
