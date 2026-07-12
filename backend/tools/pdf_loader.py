@@ -86,11 +86,11 @@ class PDFLoader:
       total_pages=pdf.page_count
     )
     if title and not self._is_placeholder(title, path):
-      metadata.fields["title"] = {"value": title, "source": MetadataSource.PDF, "confidence": 0.9}
+      metadata.set_field("title", title, MetadataSource.PDF, .9, force=True)
     else:
       metadata.title = None
     if authors:
-      metadata.fields["authors"] = {"value": authors, "source": MetadataSource.PDF, "confidence": 0.85}
+      metadata.set_field("authors", authors, MetadataSource.PDF, .85, force=True)
     return metadata
 
   def _enrich_metadata(self, pdf: pymupdf.Document, pages: list[PaperPage],

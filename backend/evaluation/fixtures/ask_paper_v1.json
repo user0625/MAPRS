@@ -1,0 +1,41 @@
+{
+  "version": "ask-paper-v2",
+  "chunks": [
+    {"chunk_id": "intro_problem", "section": "Introduction", "page_start": 1, "page_end": 1, "text": "Scientific paper readers need grounded answers with traceable citations."},
+    {"chunk_id": "method_sparse", "section": "Methods", "page_start": 2, "page_end": 2, "text": "The lexical retriever uses BM25 term matching to find exact technical phrases."},
+    {"chunk_id": "method_dense", "section": "Methods", "page_start": 2, "page_end": 3, "text": "The semantic retriever represents passages as dense embeddings, so automobile and car can match."},
+    {"chunk_id": "method_fusion", "section": "Methods", "page_start": 3, "page_end": 3, "text": "Reciprocal rank fusion combines the lexical and semantic ranked lists using RRF."},
+    {"chunk_id": "method_filter", "section": "Methods", "page_start": 3, "page_end": 4, "text": "A section constraint filters chunks before retrieval and prevents results from another chapter."},
+    {"chunk_id": "method_token_noise", "section": "Methods", "page_start": 4, "page_end": 4, "text": "A chassis identifier appears in an input example; this passage only explains document parsing."},
+    {"chunk_id": "method_stable", "section": "Methods", "page_start": 4, "page_end": 4, "text": "Candidate ties preserve original chunk order so repeated runs are deterministic."},
+    {"chunk_id": "results_recall", "section": "Results", "page_start": 5, "page_end": 5, "text": "The evaluation reports recall at six and mean reciprocal rank for retrieval quality."},
+    {"chunk_id": "results_latency", "section": "Results", "page_start": 5, "page_end": 6, "text": "Observed request latency is summarized with p50 and p95 percentiles."},
+    {"chunk_id": "results_noise", "section": "Results", "page_start": 6, "page_end": 6, "text": "After invalid semantic candidates are removed, evidence noise decreases while coverage is preserved."},
+    {"chunk_id": "results_term_noise", "section": "Results", "page_start": 6, "page_end": 6, "text": "The word evidence is also printed in an unrelated formatting example."},
+    {"chunk_id": "limits", "section": "Limitations", "page_start": 7, "page_end": 7, "text": "The baseline does not include a cross encoder reranker or a persistent vector database."},
+    {"chunk_id": "limits_scale", "section": "Limitations", "page_start": 7, "page_end": 7, "text": "Large-paper index persistence and throughput are outside the current evaluation scope."},
+    {"chunk_id": "zh_method", "section": "方法", "page_start": 8, "page_end": 8, "text": "系统使用倒数排名融合，将关键词检索与语义向量检索的排序结果合并。"},
+    {"chunk_id": "zh_filter", "section": "方法", "page_start": 8, "page_end": 8, "text": "向量候选进入融合前会过滤零分、负分以及低于最低相似度的结果。"},
+    {"chunk_id": "zh_method_noise", "section": "方法", "page_start": 8, "page_end": 8, "text": "示例配置的关键词只是字段名称，不描述检索算法。"},
+    {"chunk_id": "zh_result", "section": "结果", "page_start": 9, "page_end": 9, "text": "离线评估记录召回率、证据覆盖率、噪声率和延迟分位数。"},
+    {"chunk_id": "zh_result_multi", "section": "结果", "page_start": 9, "page_end": 9, "text": "质量指标显示过滤后召回率保持不变，同时噪声率低于未过滤混合检索。"}
+  ],
+  "cases": [
+    {"id": "en_bm25", "query": "Which retriever uses BM25 term matching?", "section": "Methods", "relevant_chunk_ids": ["method_sparse"], "should_refuse": false, "allowed_evidence": ["method_sparse"]},
+    {"id": "en_semantic_only", "query": "vehicle meaning lookup?", "section": "Methods", "relevant_chunk_ids": ["method_dense"], "should_refuse": false, "allowed_evidence": ["method_dense"]},
+    {"id": "en_rrf", "query": "How are ranked lists combined with reciprocal rank fusion?", "section": "Methods", "relevant_chunk_ids": ["method_fusion"], "should_refuse": false, "allowed_evidence": ["method_fusion"]},
+    {"id": "en_multi", "query": "Which retrieval quality and latency metrics are reported?", "section": "Results", "relevant_chunk_ids": ["results_recall", "results_latency"], "should_refuse": false, "allowed_evidence": ["results_recall", "results_latency"]},
+    {"id": "en_noise_reduction", "query": "What happens to evidence noise and coverage after invalid candidates are removed?", "section": "Results", "relevant_chunk_ids": ["results_noise"], "should_refuse": false, "allowed_evidence": ["results_noise"]},
+    {"id": "en_filter", "query": "How does the section constraint prevent another chapter?", "section": "Methods", "relevant_chunk_ids": ["method_filter"], "should_refuse": false, "allowed_evidence": ["method_filter"]},
+    {"id": "en_limits", "query": "Does the baseline include a cross encoder reranker?", "section": "Limitations", "relevant_chunk_ids": ["limits"], "should_refuse": false, "allowed_evidence": ["limits"]},
+    {"id": "en_multi_limit", "query": "Which scaling features remain outside scope?", "section": "Limitations", "relevant_chunk_ids": ["limits_scale"], "should_refuse": false, "allowed_evidence": ["limits_scale"]},
+    {"id": "zh_fusion", "query": "系统怎样合并关键词检索和语义向量检索？", "section": "方法", "relevant_chunk_ids": ["zh_method"], "should_refuse": false, "allowed_evidence": ["zh_method"]},
+    {"id": "zh_vector_filter", "query": "哪些向量结果会在融合前被过滤？", "section": "方法", "relevant_chunk_ids": ["zh_filter"], "should_refuse": false, "allowed_evidence": ["zh_filter"]},
+    {"id": "zh_metrics", "query": "离线评估记录哪些质量指标？", "section": "结果", "relevant_chunk_ids": ["zh_result"], "should_refuse": false, "allowed_evidence": ["zh_result"]},
+    {"id": "zh_multi", "query": "过滤后的召回率和噪声率有什么变化？", "section": "结果", "relevant_chunk_ids": ["zh_result_multi"], "should_refuse": false, "allowed_evidence": ["zh_result_multi"]},
+    {"id": "en_near_refuse", "query": "reranker response-duration percentile?", "section": "Methods", "relevant_chunk_ids": [], "should_refuse": true, "allowed_evidence": []},
+    {"id": "en_refuse", "query": "Martian telescope preference?", "section": "Methods", "relevant_chunk_ids": [], "should_refuse": true, "allowed_evidence": []},
+    {"id": "zh_near_refuse", "query": "database 准确性？", "section": "方法", "relevant_chunk_ids": [], "should_refuse": true, "allowed_evidence": []},
+    {"id": "zh_refuse", "query": "论文作者最喜欢哪一种海洋生物？", "section": "结果", "relevant_chunk_ids": [], "should_refuse": true, "allowed_evidence": []}
+  ]
+}

@@ -60,9 +60,19 @@ class AppSettings(BaseSettings):
     task_stale_after_seconds: int = Field(default=300, ge=30)
     checkpoint_schema_version: int = Field(default=1, ge=1)
     sse_heartbeat_seconds: int = Field(default=15, ge=1)
-    ask_candidate_count: int = Field(default=12, ge=1, le=100)
+    ask_candidate_count: int = Field(default=20, ge=1, le=100)
     ask_evidence_count: int = Field(default=6, ge=1, le=50)
     ask_rrf_k: int = Field(default=60, ge=1, le=1000)
+    ask_vector_min_similarity: float = Field(default=0.0, ge=-1.0, le=1.0)
+    ask_reranker_mode: Literal["disabled", "shadow", "enabled"] = "disabled"
+    ask_reranker_provider: Literal["openai_compatible"] = "openai_compatible"
+    ask_reranker_model: str = ""
+    ask_reranker_api_key: str | None = None
+    ask_reranker_base_url: str | None = None
+    ask_reranker_timeout: float = Field(default=1.0, gt=0, le=30)
+    ask_evidence_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
+    ask_answerability_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
+    ask_calibration_version: str = Field(default="uncalibrated", min_length=1, max_length=128)
     ask_rewrite_max_tokens: int = Field(default=160, ge=16, le=512)
     ask_retrieval_cache_size: int = Field(default=8, ge=1, le=128)
     celery_task_max_retries: int = Field(default=3, ge=0)
@@ -113,6 +123,8 @@ class AppSettings(BaseSettings):
         "llm_base_url",
         "embedding_api_key",
         "embedding_base_url",
+        "ask_reranker_api_key",
+        "ask_reranker_base_url",
         mode="before",
     )
     @classmethod

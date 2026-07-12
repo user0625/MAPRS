@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import unicodedata
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,20 +15,24 @@ import numpy as np
 from backend.core.config import AppSettings
 from backend.core.request_policy import RequestPolicy
 from backend.tools.embedder import BaseEmbedder, OpenAICompatibleEmbedder
+from backend.reranker import BaseReranker, OpenAICompatibleReranker
 
 logger = logging.getLogger(__name__)
 TOKEN = re.compile(r"[A-Za-z0-9_]+|[\u3400-\u9fff]+", re.UNICODE)
+ENGLISH_STOPWORDS = frozenset({"a", "an", "and", "are", "for", "in", "is", "of", "on", "or", "the", "to", "was", "were"})
+CHINESE_STOPWORDS = frozenset({"的", "了", "和", "是", "在", "与", "及", "中"})
 
 
 def terms(text: str) -> list[str]:
     """Tokenize English words and Chinese characters/bigrams for lexical search."""
     result: list[str] = []
-    for raw in TOKEN.findall(text.lower()):
+    normalized = unicodedata.normalize("NFKC", text).lower().replace("’", "'")
+    for raw in TOKEN.findall(normalized):
         if re.fullmatch(r"[\u3400-\u9fff]+", raw):
-            chars = list(raw)
+            chars = [char for char in raw if char not in CHINESE_STOPWORDS]
             result.extend(chars)
-            result.extend(raw[i : i + 2] for i in range(len(raw) - 1))
-        else:
+            result.extend(chars[i] + chars[i + 1] for i in range(len(chars) - 1))
+        elif raw not in ENGLISH_STOPWORDS:
             result.append(raw)
     return result
 
@@ -50,7 +55,23 @@ class RetrievalDiagnostics:
     degraded_reason: str | None = None
     bm25_candidates: int = 0
     vector_candidates: int = 0
+    vector_candidates_raw: int = 0
+    vector_candidates_filtered: int = 0
+    vector_candidates_removed: int = 0
+    rrf_candidates: int = 0
+    candidate_limit: int = 0
+    evidence_limit: int = 0
+    vector_min_similarity: float | None = None
     final_scores: list[float] = field(default_factory=list)
+    candidate_scores: list[dict[str, Any]] = field(default_factory=list)
+    reranker_mode: str = "disabled"
+    reranker_latency_ms: float | None = None
+    reranker_top_score: float | None = None
+    reranker_applied: bool = False
+    answerable: bool = True
+    evidence_threshold: float | None = None
+    answerability_threshold: float | None = None
+    calibration_version: str = "uncalibrated"
 
 
 @dataclass
@@ -86,10 +107,25 @@ class AskPaperRetrievalService:
         settings: AppSettings,
         embedder: BaseEmbedder | None = None,
         cache: RetrievalCache | None = None,
+        filter_vector_candidates: bool = True,
+        reranker: BaseReranker | None = None,
     ) -> None:
         self.settings = settings
         self.embedder = embedder
         self.cache = cache or RetrievalCache(settings.ask_retrieval_cache_size)
+        self.filter_vector_candidates = filter_vector_candidates
+        self.reranker = reranker
+
+    def _reranker(self) -> BaseReranker:
+        if self.reranker is None:
+            if not self.settings.ask_reranker_model or not self.settings.ask_reranker_api_key:
+                raise RuntimeError("reranker is not configured")
+            self.reranker = OpenAICompatibleReranker(
+                self.settings.ask_reranker_api_key,
+                self.settings.ask_reranker_model,
+                self.settings.ask_reranker_base_url,
+            )
+        return self.reranker
 
     def _embedder(self) -> BaseEmbedder:
         if self.embedder is None:
@@ -173,8 +209,19 @@ class AskPaperRetrievalService:
         if norm == 0:
             return []
         scores = index.vectors @ (vector / norm)
-        positions = np.argsort(scores)[::-1][:limit]
-        return [(int(i), float(scores[int(i)])) for i in positions]
+        # Python's stable sort plus the explicit position key makes equal scores
+        # deterministic. np.argsort(...)[::-1] reverses equal-score positions.
+        ranked = sorted(enumerate(scores), key=lambda item: (-float(item[1]), item[0]))[:limit]
+        return [(position, float(score)) for position, score in ranked]
+
+    def filter_vectors(self, candidates: list[tuple[int, float]]) -> list[tuple[int, float]]:
+        """Discard unusable and weak semantic candidates before rank-only fusion."""
+        threshold = self.settings.ask_vector_min_similarity
+        return [
+            (position, score)
+            for position, score in candidates
+            if math.isfinite(score) and score > 0.0 and score >= threshold
+        ]
 
     def retrieve(
         self,
@@ -193,31 +240,108 @@ class AskPaperRetrievalService:
         index, degraded = self._index(task_id, path, section, chunks)
         candidate_count = self.settings.ask_candidate_count
         lexical = self.bm25(index, query, candidate_count)
-        semantic: list[tuple[int, float]] = []
+        semantic_raw: list[tuple[int, float]] = []
         if index.vectors is not None:
             try:
-                semantic = self.vector(index, query, candidate_count)
+                semantic_raw = self.vector(index, query, candidate_count)
             except Exception as exc:
                 degraded = f"embedding_query_unavailable:{type(exc).__name__}"
                 logger.warning("Ask Paper vector query degraded: %s", type(exc).__name__)
+        semantic = self.filter_vectors(semantic_raw) if self.filter_vector_candidates else semantic_raw
         fused: dict[int, float] = {}
         for ranked in (lexical, semantic):
             for rank, (position, _) in enumerate(ranked, 1):
                 fused[position] = fused.get(position, 0) + 1 / (self.settings.ask_rrf_k + rank)
-        ordered = sorted(fused.items(), key=lambda item: (-item[1], item[0]))[: self.settings.ask_evidence_count]
+        # Keep the union at candidate depth. Vector filtering only removes the
+        # vector contribution; a BM25 hit remains in the union.
+        ordered_candidates = sorted(fused.items(), key=lambda item: (-item[1], item[0]))[:candidate_count]
+        bm25_map = {position: (rank, score) for rank, (position, score) in enumerate(lexical, 1)}
+        vector_map = {position: (rank, score) for rank, (position, score) in enumerate(semantic_raw, 1)}
+        reranker_scores: list[float] | None = None
+        reranker_latency_ms: float | None = None
+        mode = self.settings.ask_reranker_mode
+        if mode != "disabled" and ordered_candidates:
+            import time
+            started = time.perf_counter()
+            try:
+                reranker_scores = self._reranker().score(
+                    query,
+                    [str(index.chunks[position].get("text", "")) for position, _ in ordered_candidates],
+                    self.settings.ask_reranker_timeout,
+                )
+                if len(reranker_scores) != len(ordered_candidates):
+                    raise ValueError("invalid reranker score count")
+                if any(not math.isfinite(score) for score in reranker_scores):
+                    raise ValueError("non-finite reranker score")
+            except Exception as exc:
+                degraded = f"reranker_unavailable:{type(exc).__name__}"
+                reranker_scores = None
+                logger.warning("Ask Paper reranker degraded: %s", type(exc).__name__)
+            reranker_latency_ms = (time.perf_counter() - started) * 1000
+        ranked_candidates = ordered_candidates
+        if mode == "enabled" and reranker_scores is not None:
+            ranked_candidates = [pair for _, pair in sorted(
+                enumerate(ordered_candidates), key=lambda item: (-reranker_scores[item[0]], item[0])
+            )]
+        score_by_position = (
+            {position: reranker_scores[i] for i, (position, _) in enumerate(ordered_candidates)}
+            if reranker_scores is not None else {}
+        )
+        top_score = max(reranker_scores) if reranker_scores else None
+        answerable = not (
+            mode == "enabled" and reranker_scores is not None
+            and (top_score or 0.0) < self.settings.ask_answerability_threshold
+        )
+        if not answerable:
+            final = []
+        else:
+            final = [pair for pair in ranked_candidates if (
+                mode != "enabled" or reranker_scores is None
+                or score_by_position[pair[0]] >= self.settings.ask_evidence_threshold
+            )][: self.settings.ask_evidence_count]
+        candidate_scores = []
+        for position, hybrid_score in ordered_candidates:
+            bm = bm25_map.get(position)
+            vec = vector_map.get(position)
+            candidate_scores.append({
+                "chunk_id": index.chunks[position].get("chunk_id"),
+                "bm25_score": bm[1] if bm else None, "bm25_rank": bm[0] if bm else None,
+                "vector_score": vec[1] if vec else None, "vector_rank": vec[0] if vec else None,
+                "hybrid_score": hybrid_score, "reranker_score": score_by_position.get(position),
+                "sources": [name for name, value in (("bm25", bm), ("vector", vec)) if value],
+            })
         diagnostics = RetrievalDiagnostics(
             rewritten_query=query,
-            vector_enabled=index.vectors is not None,
+            vector_enabled=index.vectors is not None
+            and not (degraded or "").startswith("embedding_query_unavailable:"),
             degraded_reason=degraded,
             bm25_candidates=len(lexical),
             vector_candidates=len(semantic),
-            final_scores=[score for _, score in ordered],
+            vector_candidates_raw=len(semantic_raw),
+            vector_candidates_filtered=len(semantic),
+            vector_candidates_removed=len(semantic_raw) - len(semantic),
+            rrf_candidates=len(fused),
+            candidate_limit=candidate_count,
+            evidence_limit=self.settings.ask_evidence_count,
+            vector_min_similarity=(
+                self.settings.ask_vector_min_similarity if self.filter_vector_candidates else None
+            ),
+            final_scores=[score_by_position.get(position, score) for position, score in final],
+            candidate_scores=candidate_scores, reranker_mode=mode,
+            reranker_latency_ms=reranker_latency_ms, reranker_top_score=top_score,
+            reranker_applied=mode == "enabled" and reranker_scores is not None,
+            answerable=answerable, evidence_threshold=self.settings.ask_evidence_threshold,
+            answerability_threshold=self.settings.ask_answerability_threshold,
+            calibration_version=self.settings.ask_calibration_version,
         )
         logger.info(
-            "Ask Paper retrieval query=%r bm25=%d vector=%d degraded=%s final=%d",
-            query[:240], len(lexical), len(semantic), degraded, len(ordered),
+            "Ask Paper retrieval query=%r bm25=%d vector=%d/%d removed=%d rrf=%d degraded=%s final=%d",
+            query[:240], len(lexical), len(semantic), len(semantic_raw),
+            len(semantic_raw) - len(semantic), len(fused), degraded, len(final),
         )
-        return RetrievalResult([(score, index.chunks[position]) for position, score in ordered], diagnostics)
+        return RetrievalResult([
+            (score_by_position.get(position, score), index.chunks[position]) for position, score in final
+        ], diagnostics)
 
 
 _default_service: AskPaperRetrievalService | None = None
@@ -235,7 +359,15 @@ def get_retrieval_service(settings: AppSettings) -> AskPaperRetrievalService:
         settings.ask_candidate_count,
         settings.ask_evidence_count,
         settings.ask_rrf_k,
+        settings.ask_vector_min_similarity,
         settings.ask_retrieval_cache_size,
+        settings.ask_reranker_mode,
+        settings.ask_reranker_provider,
+        settings.ask_reranker_model,
+        settings.ask_reranker_timeout,
+        settings.ask_evidence_threshold,
+        settings.ask_answerability_threshold,
+        settings.ask_calibration_version,
     )
     with _default_lock:
         if _default_service is None or signature != _default_signature:

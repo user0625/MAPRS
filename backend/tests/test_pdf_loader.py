@@ -60,3 +60,21 @@ def test_pdf_loader_ignores_rotated_arxiv_stamp_for_title_and_authors(tmp_path):
     assert document.metadata.fields["title"].source == "page_layout"
     rotated = [candidate for candidate in document.metadata.candidates if candidate.rotation == 90]
     assert rotated and rotated[0].text.startswith("arXiv:")
+
+
+def test_pdf_metadata_provenance_remains_typed_during_layout_enrichment(tmp_path):
+    path = tmp_path / "metadata-title.pdf"
+    pdf = pymupdf.open()
+    pdf.set_metadata({"title": "Reliable Embedded Title", "author": "Ada Lovelace"})
+    page = pdf.new_page(width=612, height=792)
+    page.insert_text((100, 100), "A Different Large Layout Heading", fontsize=18)
+    page.insert_text((100, 160), "Abstract", fontsize=12)
+    page.insert_text((100, 180), "Enough body text for metadata enrichment.", fontsize=10)
+    pdf.save(path)
+    pdf.close()
+
+    metadata = PDFLoader().load(path).metadata
+
+    assert metadata.title == "Reliable Embedded Title"
+    assert metadata.fields["title"].confidence == .9
+    assert metadata.fields["authors"].confidence == .85

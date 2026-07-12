@@ -124,14 +124,23 @@ def execute_answer(
         if rewrite_degraded and not result.diagnostics.degraded_reason:
             result.diagnostics.degraded_reason = rewrite_degraded
         logger.info(
-            "Ask Paper diagnostics message=%s bm25=%s vector=%s degraded=%s candidates=%d/%d final=%d",
+            "Ask Paper diagnostics message=%s bm25=%s vector=%s degraded=%s candidates=%d/%d/%d removed=%d rrf=%d final=%d reranker=%s applied=%s latency_ms=%s top=%s answerable=%s calibration=%s",
             message_id,
             result.diagnostics.bm25_enabled,
             result.diagnostics.vector_enabled,
             result.diagnostics.degraded_reason,
             result.diagnostics.bm25_candidates,
+            result.diagnostics.vector_candidates_raw,
             result.diagnostics.vector_candidates,
+            result.diagnostics.vector_candidates_removed,
+            result.diagnostics.rrf_candidates,
             len(result.hits),
+            result.diagnostics.reranker_mode,
+            result.diagnostics.reranker_applied,
+            result.diagnostics.reranker_latency_ms,
+            result.diagnostics.reranker_top_score,
+            result.diagnostics.answerable,
+            result.diagnostics.calibration_version,
         )
         if not result.hits:
             answer = (

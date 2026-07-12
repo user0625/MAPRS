@@ -1,6 +1,9 @@
 import json
+import math
 import time
 from types import SimpleNamespace
+
+import numpy as np
 
 from backend.api.ask_store import AskStore
 from backend.api.task_store import DatabaseTaskStore
@@ -38,6 +41,43 @@ class BrokenEmbedder(BaseEmbedder):
 
     def embed_text(self, text):
         raise RuntimeError("secret upstream details")
+
+
+class QueryBrokenEmbedder(BaseEmbedder):
+    model_name = "query-broken"
+
+    def embed_text(self, text):
+        return [1.0, 0.0]
+
+    def embed_query(self, query):
+        raise TimeoutError("secret query failure")
+
+
+class ScoredEmbedder(BaseEmbedder):
+    model_name = "scored"
+
+    def embed_text(self, text):
+        mapping = {
+            "positive": [1.0, 0.0],
+            "boundary": [0.5, math.sqrt(0.75)],
+            "zero": [0.0, 1.0],
+            "negative": [-1.0, 0.0],
+            "tie-a": [1.0, 0.0],
+            "tie-b": [1.0, 0.0],
+        }
+        return mapping.get(text, [1.0, 0.0])
+
+
+class FakeReranker:
+    model_name = "fake"
+
+    def __init__(self, scores=None, error=None):
+        self.scores, self.error = scores, error
+
+    def score(self, query, passages, timeout):
+        if self.error:
+            raise self.error
+        return self.scores[:len(passages)]
 
 
 class RewriteClient:
@@ -80,9 +120,72 @@ def test_vector_candidates_and_rrf_add_semantic_synonym(tmp_path):
     )
     result = service.retrieve("task", str(state), "car safety")
     assert result.diagnostics.vector_enabled
+    assert result.diagnostics.vector_candidates_raw == 2
     assert result.diagnostics.vector_candidates == 2
+    assert result.diagnostics.vector_candidates_removed == 0
     assert {chunk["chunk_id"] for _, chunk in result.hits} == {"semantic", "lexical"}
     assert result.hits[0][0] > 0
+
+
+def test_vector_filter_excludes_zero_negative_and_keeps_threshold_boundary():
+    service = AskPaperRetrievalService(
+        settings(
+            embedding_provider="openai_compatible", embedding_api_key="x",
+            ask_vector_min_similarity=0.5,
+        ),
+        embedder=ScoredEmbedder(),
+    )
+    candidates = [(0, 1.0), (1, 0.5), (2, 0.0), (3, -0.1), (4, float("nan"))]
+    assert service.filter_vectors(candidates) == [(0, 1.0), (1, 0.5)]
+
+
+def test_vector_equal_scores_are_stable_by_chunk_position():
+    service = AskPaperRetrievalService(
+        settings(embedding_provider="openai_compatible", embedding_api_key="x"),
+        embedder=ScoredEmbedder(),
+    )
+    index = service._build_lexical([
+        {"chunk_id": "first", "text": "tie-a"},
+        {"chunk_id": "second", "text": "tie-b"},
+    ])
+    index.vectors = np.asarray([[1.0, 0.0], [1.0, 0.0]])
+    assert service.vector(index, "query", 2) == [(0, 1.0), (1, 1.0)]
+
+
+def test_reranker_uses_separate_answerability_and_evidence_thresholds(tmp_path):
+    state = tmp_path / "state.json"
+    write_state(state, [
+        {"chunk_id": "first", "text": "target first"},
+        {"chunk_id": "second", "text": "target second"},
+    ])
+    service = AskPaperRetrievalService(
+        settings(ask_reranker_mode="enabled", ask_evidence_threshold=0.5,
+                 ask_answerability_threshold=0.7),
+        reranker=FakeReranker([0.8, 0.3]),
+    )
+    result = service.retrieve("task", str(state), "target")
+    assert [chunk["chunk_id"] for _, chunk in result.hits] == ["first"]
+    assert result.diagnostics.answerable is True
+    assert result.diagnostics.reranker_applied is True
+
+    refusing = AskPaperRetrievalService(
+        settings(ask_reranker_mode="enabled", ask_answerability_threshold=0.9),
+        reranker=FakeReranker([0.8, 0.3]),
+    ).retrieve("task", str(state), "target")
+    assert refusing.hits == []
+    assert refusing.diagnostics.answerable is False
+
+
+def test_reranker_failure_degrades_to_hybrid_without_upstream_details(tmp_path):
+    state = tmp_path / "state.json"
+    write_state(state, [{"chunk_id": "hit", "text": "robust target"}])
+    result = AskPaperRetrievalService(
+        settings(ask_reranker_mode="enabled"),
+        reranker=FakeReranker(error=TimeoutError("secret")),
+    ).retrieve("task", str(state), "target")
+    assert result.hits
+    assert result.diagnostics.degraded_reason == "reranker_unavailable:TimeoutError"
+    assert result.diagnostics.reranker_applied is False
 
 
 def test_embedding_failure_degrades_to_bm25_without_sensitive_error(tmp_path):
@@ -95,6 +198,20 @@ def test_embedding_failure_degrades_to_bm25_without_sensitive_error(tmp_path):
     assert result.hits
     assert result.diagnostics.degraded_reason == "embedding_unavailable:RuntimeError"
     assert "secret" not in result.diagnostics.degraded_reason
+
+
+def test_embedding_query_failure_is_explicit_bm25_degradation(tmp_path):
+    state = tmp_path / "state.json"
+    write_state(state, [{"chunk_id": "c1", "text": "robust retrieval"}])
+    service = AskPaperRetrievalService(
+        settings(embedding_provider="openai_compatible", embedding_api_key="x"),
+        embedder=QueryBrokenEmbedder(),
+    )
+    result = service.retrieve("task", str(state), "retrieval")
+    assert [chunk["chunk_id"] for _, chunk in result.hits] == ["c1"]
+    assert result.diagnostics.vector_enabled is False
+    assert result.diagnostics.degraded_reason == "embedding_query_unavailable:TimeoutError"
+    assert result.diagnostics.vector_candidates_raw == 0
 
 
 def test_cache_key_version_provider_section_and_lru_capacity(tmp_path):
