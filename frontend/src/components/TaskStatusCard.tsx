@@ -3,6 +3,7 @@ import type { TaskStatus, TaskStatusResponse } from '../types/api'
 interface TaskStatusCardProps {
   task: TaskStatusResponse | null
   taskId: string | null
+  connection: string
   onCancel?: () => Promise<void>
   actionPending?: boolean
 }
@@ -13,12 +14,14 @@ const statusLabels: Record<TaskStatus, string> = {
   completed: 'Completed',
   failed: 'Failed',
   canceled: 'Canceled',
+  interrupted: 'Interrupted',
 }
 
-export function TaskStatusCard({ task, taskId, onCancel, actionPending }: TaskStatusCardProps) {
+export function TaskStatusCard({ task, taskId, connection, onCancel, actionPending }: TaskStatusCardProps) {
   if (!taskId) {
     return (
       <section className="panel status-card status-empty">
+        <div className="connection-state" aria-live="polite">Events: {connection}</div>
         <span className="status-orbit" aria-hidden="true">◎</span>
         <h2>Ready when you are</h2>
         <p>Upload a paper to see live progress from the analysis agents.</p>
@@ -35,10 +38,13 @@ export function TaskStatusCard({ task, taskId, onCancel, actionPending }: TaskSt
           <span className="eyebrow">Analysis task</span>
           <h2>{task?.paper_title ?? 'Processing your paper'}</h2>
         </div>
-        <span className={`status-badge status-${status}`}>
-          <span className="status-dot" aria-hidden="true" />
-          {statusLabels[status]}
-        </span>
+        <div className="status-meta">
+          <div className="connection-state" aria-live="polite">Events: {connection}</div>
+          <span className={`status-badge status-${status}`}>
+            <span className="status-dot" aria-hidden="true" />
+            {statusLabels[status]}
+          </span>
+        </div>
       </div>
 
       <dl className="task-details">

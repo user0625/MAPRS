@@ -17,7 +17,7 @@ from backend.tools.retriever import PaperRetriever
 from backend.tools.vector_store import NumpyVectorStore
 
 from backend.core.config import AppSettings
-from backend.core.orchestrator import PaperAnalysisOrchestrator, create_default_orchestrator
+from backend.core.orchestrator import create_default_orchestrator
 
 
 

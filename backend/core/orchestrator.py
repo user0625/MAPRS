@@ -62,7 +62,8 @@ class PaperAnalysisOrchestrator:
 
   def run(self, paper_input: PaperInput, output_language: Literal["zh", "en"]="zh",
           cancel_check=None, task_id: str | None = None,
-          report_configuration: dict | None = None) -> AnalysisState:
+          report_configuration: dict | None = None, initial_state: AnalysisState | None = None,
+          checkpoint_callback=None) -> AnalysisState:
     """
       Run the full analysis workflow.
 
@@ -77,7 +78,7 @@ class PaperAnalysisOrchestrator:
           Full workflow state containing intermediate outputs and final report.
     """
 
-    state = AnalysisState(
+    state = initial_state or AnalysisState(
       task_id=task_id or self._generate_task_id(),
       paper_input=paper_input,
     )
@@ -86,15 +87,24 @@ class PaperAnalysisOrchestrator:
     state.metadata["report_configuration"] = config
 
     try:
-      for step in (self._parse_pdf, self._chunk_document, self._plan_analysis,
+      steps = (self._parse_pdf, self._chunk_document, self._plan_analysis,
                    self._build_retrieval_index, self._retrieve_evidence,
                    self._read_paper, self._criticize_paper, self._write_report,
-                   self._verify_report):
+                   self._verify_report)
+      completed = {item.step_name for item in state.step_history if item.status == StepStatus.SUCCESS}
+      # The vector index is intentionally ephemeral and must be rebuilt on resume.
+      if "build_retrieval_index" in completed and state.document and state.document.has_chunks():
+        completed.discard("build_retrieval_index")
+      for step in steps:
+        if step.__name__.removeprefix("_") in completed:
+          continue
         if cancel_check and cancel_check():
           state.metadata["canceled"] = True
           state.error_message = "Task canceled by user."
           return state
         step(state)
+        if checkpoint_callback:
+          checkpoint_callback(step.__name__.removeprefix("_"), state)
         if cancel_check and cancel_check():
           state.metadata["canceled"] = True
           state.error_message = "Task canceled by user."

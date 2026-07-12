@@ -109,7 +109,7 @@ def analyze(
   # output.parent.mkdir(parents=True, exist_ok=True)
   # output.write_text(markdown, encoding="utf-8")
   exporter = ReportExporter()
-  save_paths = exporter.save_all(state=state, report_md_path=output, state_json_path=state_json)
+  exporter.save_all(state=state, report_md_path=output, state_json_path=state_json)
 
   console.print(
     Panel.fit(

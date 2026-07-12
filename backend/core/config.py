@@ -54,6 +54,14 @@ class AppSettings(BaseSettings):
     report_dir: Path = Path("backend/outputs/reports")
     log_dir: Path = Path("backend/outputs/logs")
     database_url: str = "sqlite:///backend/data/tasks.db"
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/1"
+    task_heartbeat_seconds: int = Field(default=15, ge=1)
+    task_stale_after_seconds: int = Field(default=300, ge=30)
+    checkpoint_schema_version: int = Field(default=1, ge=1)
+    sse_heartbeat_seconds: int = Field(default=15, ge=1)
+    celery_task_max_retries: int = Field(default=3, ge=0)
+    celery_visibility_timeout: int = Field(default=3600, ge=60)
 
     # Runtime config
     default_top_k: int = Field(default=5, ge=1, le=50)

@@ -20,7 +20,7 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读的多智能体
 - 支持完全离线、可重复的 mock 模式。
 - 支持 OpenAI-compatible LLM 和 embedding API，例如阿里云百炼 Qwen。
 - 通过 CLI 输出中文或英文 Markdown 报告，并可选保存完整运行状态 JSON。
-- 提供 FastAPI 同步上传分析和进程内后台任务 API，以及健康检查、任务状态、报告查询和 Swagger/ReDoc 文档。
+- 提供 FastAPI 同步上传分析、Celery 后台任务 API，以及健康检查、任务状态、报告查询和 Swagger/ReDoc 文档。
 - 为 LLM 与 embedding 提供统一超时、指数退避和有限总预算；仅重试连接错误、超时、429 与 5xx。
 - 严格校验 PDF 上传并支持活动任务去重、协作式取消、失败/取消后重试和文件保留期清理。
 - 记录 Prompt Set、模板哈希及结构化输出成功/重试/失败统计，不保存模型原始响应。
@@ -332,7 +332,18 @@ RUN_REAL_LLM_TESTS=1 uv run pytest backend/tests/test_orchestrator_real.py -v -s
 - JSON 解析器可处理代码块、周边解释文字和尾随逗号；Schema 失败会把校验错误反馈给模型重试。网络错误由独立的共享请求策略处理。
 - 长论文和大量检索证据可能受到模型上下文窗口限制。
 - 真实 API 调用可能遇到网络超时、鉴权失败、限流、模型不可用和调用费用。
-- 后台任务仍由 FastAPI `BackgroundTasks` 在 API 进程内执行；任务元数据持久化到 SQLite，但服务重启不会恢复工作流，遗留的 `pending/running` 任务会标记为中断失败。
+- Compose 后台任务由独立 Celery Worker 执行，任务元数据持久化到 PostgreSQL；兼容检查点的失败任务可恢复。SQLite 仍用于测试和轻量本地开发。
 - 状态 JSON 和 Markdown 报告仍是独立文件。文件被移动或删除后历史元数据仍可查询，但详情中的步骤或报告内容不可用；系统不会自动导入旧运行产物。
 - 默认上传上限为 50 MiB；终态任务文件默认保留 30 天并在启动时清理，任务元数据仍会保留。
 - 取消在阶段边界生效，不会强制终止正在进行的单次模型请求。系统仍没有认证、权限控制、限流和生产部署保障。
+# Durable API and worker
+
+Compose starts PostgreSQL, Redis, the API, Celery worker, and Nginx frontend. The API runs `alembic upgrade head` before Uvicorn; the worker uses the same image and shared output volume. The application is available at <http://localhost:3000>, while FastAPI remains directly available at <http://localhost:8000>. Useful commands:
+
+```bash
+docker compose logs -f worker
+docker compose exec api alembic upgrade head
+curl http://localhost:3000/api/health
+```
+
+Task operations include `/cancel`, `/retry`, `/resume`, `/rerun`, `DELETE /api/tasks/{id}`, durable SSE `/events`, structured `/report/structured`, and task-scoped `/evidence/{evidence_id}`. SQLite import is always explicit and idempotently skips existing task IDs.

@@ -50,7 +50,8 @@ def create_app() -> FastAPI:
   @asynccontextmanager
   async def lifespan(_: FastAPI):
     store.create_tables()
-    store.recover_interrupted_tasks()
+    # Only stale heartbeats are considered lost; live Celery work survives API restarts.
+    store.recover_interrupted_tasks(settings.task_stale_after_seconds)
     store.cleanup_expired_files(settings.file_retention_days)
     yield
 

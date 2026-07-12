@@ -5,7 +5,9 @@ React + TypeScript + Vite 前端提供两个工作区：
 - **New Analysis**：上传 PDF，配置 query、语言、分析深度、目标读者、报告预设和可选自定义章节，轮询任务状态并展示 Markdown 报告。活动任务支持取消。
 - **Task History**：分页查看持久化历史和安全详情；展示论文信息、Prompt/结构化输出摘要、可折叠工作流时间线和报告。`failed`、`canceled` 任务支持重试。
 
-报告支持一键复制与下载 `.md`；历史详情还展示元数据来源/置信度、章节目录、五维质量分和修订次数，并提供 JSON、HTML、PDF、DOCX 下载。桌面端采用 Archive + Analysis Detail 双栏布局，移动端自动切换为单栏。
+两个页面共享同一交互报告组件。报告支持一键复制和 Markdown、JSON、HTML、PDF、DOCX 下载；结构化产物可用时提供完整章节目录、大小写不敏感搜索、上一项/下一项定位，以及按需加载并缓存的 Evidence 详情。搜索不会隐藏目录项，匹配项仅作标记；`Reset` 或 `Overview` 会清空定位状态并返回报告顶部。旧任务或结构化接口不可用时自动保留完整 Markdown 阅读体验。
+
+桌面端报告正文使用独立滚动区域，证据显示为右侧抽屉；移动端使用自然页面高度、折叠目录和底部证据面板。证据面板支持 Escape 关闭、错误重试和焦点返回。Task History 桌面端继续保持 560px 双栏约束，移动端自动切换为单栏。
 
 ## 本地开发
 
@@ -15,13 +17,25 @@ npm install
 npm run dev
 ```
 
-默认 API 地址为 `http://127.0.0.1:8000`。如需覆盖，创建 `frontend/.env.local`：
+开发服务器默认将 `/api` 代理到 `http://127.0.0.1:8000`。如需覆盖，创建 `frontend/.env.local`：
 
 ```env
 VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 修改环境变量后需要重新启动开发服务器。
+
+## Docker 运行
+
+在仓库根目录执行 `docker compose up -d --build`，等待五个服务启动后访问 <http://localhost:3000>。生产镜像使用 Node 20 构建静态资源，并由 Nginx 托管；Nginx 同时代理 API、上传下载与无缓冲 SSE 请求。
+
+```bash
+docker compose ps
+curl http://localhost:3000/api/health
+docker compose logs -f frontend
+```
+
+FastAPI 仍暴露在 <http://localhost:8000>，便于绕过代理直接调试。桌面端 Task History 的 Archive 与 Analysis Detail 固定为 560px，详情在模块内部滚动；移动端使用自然高度和页面滚动。
 
 ## 任务操作
 
@@ -36,6 +50,10 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 
 ```bash
 npm run build
+npm run lint
 ```
 
-构建会先执行 TypeScript 项目检查，再由 Vite 生成 `dist/` 生产资源。
+构建会先执行 TypeScript 项目检查，再由 Vite 生成 `dist/` 生产资源。完整交付检查还包括仓库根目录的 `docker compose config --quiet` 和 `git diff --check`。
+# Browser behavior
+
+The UI consumes task SSE with replay and exponential reconnect, falling back to low-frequency status synchronization. Upload supports drag/drop and keyboard activation, built-in analysis presets, task filtering and lifecycle actions, and `light | dark | system` themes. Theme choice is stored in `localStorage`; task data remains server-side. EventSource requires a modern evergreen browser.

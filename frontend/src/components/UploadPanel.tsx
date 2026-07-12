@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
 import type { AnalysisDepth, OutputLanguage, ReportConfiguration, ReportTemplate, TargetAudience } from '../types/api'
 
 interface UploadPanelProps {
@@ -7,6 +7,12 @@ interface UploadPanelProps {
 }
 
 const DEFAULT_QUERY = 'Analyze this paper and generate a structured reading report.'
+const PRESETS = {
+  'Quick Reading': ['quick', 'general', 'standard'],
+  'Research Review': ['standard', 'researcher', 'standard'],
+  'Peer Review': ['deep', 'reviewer', 'review'],
+  'Reproducibility': ['deep', 'reviewer', 'reproducibility'],
+} as const
 
 export function UploadPanel({ disabled, onSubmit }: UploadPanelProps) {
   const [file, setFile] = useState<File | null>(null)
@@ -17,6 +23,20 @@ export function UploadPanel({ disabled, onSubmit }: UploadPanelProps) {
   const [template, setTemplate] = useState<ReportTemplate>('standard')
   const [customSections, setCustomSections] = useState('')
   const [validationError, setValidationError] = useState<string | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const chooseFile = (next: File | null) => {
+    if (next && (!next.name.toLowerCase().endsWith('.pdf') || (next.type && next.type !== 'application/pdf'))) {
+      setValidationError('Only PDF files are supported.'); return
+    }
+    if (next && next.size > 50 * 1024 * 1024) { setValidationError('PDF files must be 50 MB or smaller.'); return }
+    setFile(next); setValidationError(null)
+  }
+  const drop = (event: DragEvent) => { event.preventDefault(); setDragging(false); chooseFile(event.dataTransfer.files[0] || null) }
+  const activate = (event: KeyboardEvent) => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); inputRef.current?.click() }
+  }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -52,22 +72,29 @@ export function UploadPanel({ disabled, onSubmit }: UploadPanelProps) {
       </div>
 
       <form onSubmit={handleSubmit}>
-        <label className={`file-drop ${file ? 'has-file' : ''}`}>
+        <label className={`file-drop ${file ? 'has-file' : ''} ${dragging ? 'dragging' : ''}`}
+          tabIndex={0} role="button" onKeyDown={activate} onDragOver={event => { event.preventDefault(); setDragging(true) }}
+          onDragLeave={() => setDragging(false)} onDrop={drop} aria-label="Drop a PDF or press Enter to browse">
           <input
+            ref={inputRef}
             type="file"
             accept="application/pdf,.pdf"
             disabled={disabled}
             onChange={(event) => {
-              setFile(event.target.files?.[0] ?? null)
-              setValidationError(null)
+              chooseFile(event.target.files?.[0] ?? null)
             }}
           />
           <span className="file-icon" aria-hidden="true">PDF</span>
           <span className="file-copy">
             <strong>{file ? file.name : 'Choose a PDF paper'}</strong>
-            <small>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : 'Click to browse from your computer'}</small>
+            <small>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : 'Drop here or click to browse · PDF up to 50 MB'}</small>
           </span>
         </label>
+
+        <div className="preset-row" aria-label="Analysis presets">{Object.entries(PRESETS).map(([name, values]) =>
+          <button type="button" key={name} disabled={disabled} onClick={() => {
+            setDepth(values[0]); setAudience(values[1]); setTemplate(values[2])
+          }}>{name}</button>)}</div>
 
         <label className="field">
           <span>Research question</span>

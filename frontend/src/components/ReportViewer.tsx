@@ -1,6 +1,5 @@
-import Markdown from 'react-markdown'
 import type { TaskReportResponse } from '../types/api'
-import { ReportActions } from './ReportActions'
+import { InteractiveReport } from './InteractiveReport'
 
 interface ReportViewerProps {
   report: TaskReportResponse | null
@@ -29,11 +28,8 @@ export function ReportViewer({ report, loading }: ReportViewerProps) {
           <span className="eyebrow">Final report</span>
           <h2>Paper analysis</h2>
         </div>
-        <ReportActions markdown={report.report_markdown} filename={`${report.task_id}-report.md`} />
       </header>
-      <article className="markdown-body">
-        <Markdown>{report.report_markdown}</Markdown>
-      </article>
+      <InteractiveReport taskId={report.task_id} markdown={report.report_markdown} />
     </section>
   )
 }

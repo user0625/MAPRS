@@ -73,6 +73,11 @@ class TaskStatusResponse(BaseModel):
     state_json_path: str | None = None
 
     error_message: str | None = None
+    progress: int = 0
+    current_step: str | None = None
+    attempt_count: int = 0
+    last_checkpoint_step: str | None = None
+    last_event_id: int = 0
 
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -82,6 +87,46 @@ class TaskReportResponse(BaseModel):
     status: APITaskStatus
     report_markdown: str
     report_path: str | None = None
+
+
+class StructuredClaimResponse(BaseModel):
+    text: str
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class StructuredSectionResponse(BaseModel):
+    title: str
+    content: str = ""
+    order: int = 0
+    evidence_ids: list[str] = Field(default_factory=list)
+    claims: list[StructuredClaimResponse] = Field(default_factory=list)
+
+
+class StructuredReportBodyResponse(BaseModel):
+    title: str = "Paper Reading Report"
+    paper_title: str | None = None
+    sections: list[StructuredSectionResponse] = Field(default_factory=list)
+    quality_summary: dict[str, Any] | None = None
+
+
+class EvidenceIndexItemResponse(BaseModel):
+    evidence_id: str
+    chunk_id: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    section: str | None = None
+
+
+class StructuredReportResponse(BaseModel):
+    task_id: str
+    report: StructuredReportBodyResponse
+    quality_summary: dict[str, Any] = Field(default_factory=dict)
+    evidence_index: list[EvidenceIndexItemResponse] = Field(default_factory=list)
+
+
+class EvidenceResponse(EvidenceIndexItemResponse):
+    task_id: str
+    text: str = Field(max_length=2000)
 
 
 class WorkflowStepSummary(BaseModel):

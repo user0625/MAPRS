@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import { artifactUrl, cancelTask, getTaskDetail, listTasks, retryTask } from '../api/paperApi'
+import { cancelTask, deleteTask, getTaskDetail, listTasks, rerunTask, resumeTask, retryTask } from '../api/paperApi'
 import type { TaskDetailResponse, TaskStatus, TaskStatusResponse } from '../types/api'
-import { ReportActions } from './ReportActions'
+import { InteractiveReport } from './InteractiveReport'
 
 const PAGE_SIZE = 3
 const POLL_INTERVAL_MS = 3000
@@ -29,12 +28,14 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
   const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [actionPending, setActionPending] = useState(false)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
 
   const loadList = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const response = await listTasks(PAGE_SIZE, offset)
+      const response = await listTasks(PAGE_SIZE, offset, search, statusFilter)
       setTasks(response.items)
       setTotal(response.total)
       setSelectedId(current => current && response.items.some(item => item.task_id === current)
@@ -44,7 +45,7 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
     } finally {
       setLoading(false)
     }
-  }, [offset])
+  }, [offset, search, statusFilter])
 
   useEffect(() => { void loadList() }, [loadList, refreshToken])
 
@@ -76,13 +77,18 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
   const metadataQuality = (detail?.metadata.metadata_quality || detail?.workflow_metadata.metadata_quality || {}) as Record<string, { source?: string, confidence?: number }>
   const paperSections = (detail?.metadata.paper_sections || detail?.workflow_metadata.paper_sections || []) as Array<{ name?: string, page_start?: number, page_end?: number }>
 
-  const runAction = async (action: 'cancel' | 'retry') => {
+  const runAction = async (action: 'cancel' | 'retry' | 'resume' | 'rerun' | 'delete') => {
     if (!detail) return
     setActionPending(true); setError(null)
     try {
-      const response = action === 'cancel' ? await cancelTask(detail.task_id) : await retryTask(detail.task_id)
-      if (action === 'retry') setSelectedId(response.task_id)
-      else setDetail(await getTaskDetail(response.task_id))
+      if (action === 'delete') {
+        if (!window.confirm('Delete this task and all files permanently?')) return
+        await deleteTask(detail.task_id); setSelectedId(null); setDetail(null)
+      } else {
+        const response = action === 'cancel' ? await cancelTask(detail.task_id) : action === 'retry' ? await retryTask(detail.task_id) : action === 'resume' ? await resumeTask(detail.task_id) : await rerunTask(detail.task_id)
+        if ('task_id' in response && action !== 'cancel' && action !== 'resume') setSelectedId(response.task_id)
+        else setDetail(await getTaskDetail(response.task_id))
+      }
       await loadList()
     } catch (cause) { setError(cause instanceof Error ? cause.message : `Could not ${action} task.`) }
     finally { setActionPending(false) }
@@ -92,6 +98,7 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
     <div className="history-top">
     <aside className="panel history-list">
       <div className="history-heading"><div><span className="eyebrow">Archive</span><h2>Task history</h2></div><button onClick={() => void loadList()} disabled={loading}>Refresh</button></div>
+      <div className="history-filters"><input aria-label="Search tasks" type="search" placeholder="Search title or task ID" value={search} onChange={e => { setOffset(0); setSearch(e.target.value) }} /><select aria-label="Filter by status" value={statusFilter} onChange={e => { setOffset(0); setStatusFilter(e.target.value) }}><option value="">All statuses</option>{['pending','running','completed','failed','canceled'].map(value => <option key={value}>{value}</option>)}</select></div>
       {error && <div className="request-error" role="alert">{error}</div>}
       {loading ? <p className="history-state">Loading tasks…</p> : tasks.length === 0 ? <p className="history-state">No analysis tasks yet.</p> :
         <div className="task-list">{tasks.map(task => <button className={selectedId === task.task_id ? 'selected' : ''} key={task.task_id} onClick={() => setSelectedId(task.task_id)}>
@@ -100,9 +107,9 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
       <div className="pagination"><button disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Previous</button><span>{total ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}` : '0 tasks'}</span><button disabled={offset + PAGE_SIZE >= total || loading} onClick={() => setOffset(offset + PAGE_SIZE)}>Next</button></div>
     </aside>
     <section className="history-detail">
-      {!selectedId ? <div className="panel detail-empty">Select a task to see its complete details.</div> : detailLoading && !detail ? <div className="panel detail-empty">Loading details…</div> : detail && <>
+      {!selectedId ? <div className="panel detail-empty">Select a task to see its complete details.</div> : detailLoading && !detail ? <div className="panel detail-empty">Loading details…</div> : !detail ? <div className="panel detail-empty">{error || 'Task details are unavailable.'}</div> : <>
         <div className="panel detail-card">
-          <div className="detail-title"><div><span className="eyebrow">Analysis detail</span><h2>{taskName(detail)}</h2></div><div className="detail-actions"><StatusBadge status={detail.status} />{(detail.status === 'pending' || detail.status === 'running') && <button disabled={actionPending} onClick={() => void runAction('cancel')}>{actionPending ? 'Canceling…' : 'Cancel'}</button>}{(detail.status === 'failed' || detail.status === 'canceled') && <button disabled={actionPending} onClick={() => void runAction('retry')}>{actionPending ? 'Retrying…' : 'Retry'}</button>}</div></div>
+          <div className="detail-title"><div><span className="eyebrow">Analysis detail</span><h2>{taskName(detail)}</h2></div><div className="detail-actions"><StatusBadge status={detail.status} />{(detail.status === 'pending' || detail.status === 'running') && <button disabled={actionPending} onClick={() => void runAction('cancel')}>Cancel</button>}{detail.status === 'failed' && detail.last_checkpoint_step && <button disabled={actionPending} onClick={() => void runAction('resume')}>Resume</button>}{(detail.status === 'failed' || detail.status === 'canceled') && <button disabled={actionPending} onClick={() => void runAction('retry')}>Retry</button>}{['completed','failed','canceled'].includes(detail.status) && <><button disabled={actionPending} onClick={() => void runAction('rerun')}>Rerun</button><button disabled={actionPending} onClick={() => void runAction('delete')}>Delete</button></>}</div></div>
           {detail.error_message && <div className="error-message"><strong>Task failed</strong>{detail.error_message}</div>}
           <dl className="detail-fields">
             <div className="wide"><dt>Paper title</dt><dd>{detail.paper_title || '—'}</dd></div>
@@ -125,7 +132,7 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
           {!detail.state_available ? <p className="missing-note">Workflow state file is unavailable. Task metadata is still preserved.</p> : !detail.step_history?.length ? <p className="missing-note">No workflow steps were recorded.</p> :
             <ol className="timeline">{detail.step_history.map((step, index) => <li key={`${step.step_name}-${index}`}><span className={`step-dot step-${step.status}`} /><div><div><strong>{step.step_name}</strong><time>{formatDate(step.timestamp)}</time></div><small>{step.status}</small>{step.message && <p>{step.message}</p>}{Object.keys(step.metadata).length > 0 && <pre>{JSON.stringify(step.metadata, null, 2)}</pre>}</div></li>)}</ol>}
         </div></details>
-        <details className="panel collapsible-card history-report" open><summary><h3>Report</h3><span aria-hidden="true" /></summary><div className="collapsible-content">{detail.report_available && detail.report_markdown ? <><div className="history-report-actions"><ReportActions markdown={detail.report_markdown} filename={`${detail.task_id}-report.md`} />{(['markdown','json','html','pdf','docx'] as const).map(format => <a className="artifact-link" key={format} href={artifactUrl(detail.task_id, format)}>{format.toUpperCase()}</a>)}</div><div className="markdown-body"><ReactMarkdown>{detail.report_markdown}</ReactMarkdown></div></> : <p className="missing-note">{detail.status === 'completed' ? 'The report file is unavailable.' : 'The report will appear after this task completes.'}</p>}</div></details>
+        <details className="panel collapsible-card history-report" open><summary><h3>Report</h3><span aria-hidden="true" /></summary><div className="collapsible-content">{detail.report_available && detail.report_markdown ? <InteractiveReport taskId={detail.task_id} markdown={detail.report_markdown} compact /> : <p className="missing-note">{detail.status === 'completed' ? 'The report file is unavailable.' : 'The report will appear after this task completes.'}</p>}</div></details>
     </section>}
   </div>
 }

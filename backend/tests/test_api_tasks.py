@@ -22,6 +22,11 @@ def test_api_documentation_routes():
     openapi_response = client.get("/openapi.json")
     assert openapi_response.status_code == 200
     assert "/api/health" in openapi_response.json()["paths"]
+    paths = openapi_response.json()["paths"]
+    structured = paths["/api/tasks/{task_id}/report/structured"]["get"]
+    evidence = paths["/api/tasks/{task_id}/evidence/{evidence_id}"]["get"]
+    assert structured["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("StructuredReportResponse")
+    assert evidence["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("EvidenceResponse")
 
 
 def test_synchronous_upload_rejects_non_pdf():

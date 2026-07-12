@@ -1,4 +1,4 @@
-export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled' | 'interrupted'
 
 export type OutputLanguage = 'zh' | 'en'
 export type AnalysisDepth = 'quick' | 'standard' | 'deep'
@@ -31,7 +31,38 @@ export interface TaskStatusResponse {
   report_path: string | null
   state_json_path: string | null
   error_message: string | null
+  progress: number
+  current_step: string | null
+  attempt_count: number
+  last_checkpoint_step: string | null
+  last_event_id: number
   metadata: Record<string, unknown>
+}
+
+export interface TaskEvent {
+  id: number
+  type: string
+  status: TaskStatus | null
+  step: string | null
+  message: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface EvidenceItem {
+  task_id: string; evidence_id: string; chunk_id: string | null
+  page_start: number | null; page_end: number | null; section: string | null; text: string
+}
+
+export interface ReportClaim { text: string; evidence_ids: string[] }
+export interface StructuredReportSection {
+  title: string; content: string; order: number; evidence_ids: string[]; claims: ReportClaim[]
+}
+export interface StructuredReportResponse {
+  task_id: string
+  report: { title: string; paper_title: string | null; sections: StructuredReportSection[]; quality_summary: Record<string, unknown> | null }
+  quality_summary: Record<string, unknown>
+  evidence_index: Array<Omit<EvidenceItem, 'task_id' | 'text'>>
 }
 
 export interface TaskReportResponse {

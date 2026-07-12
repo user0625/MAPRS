@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from backend.llm.prompt_loader import PromptTemplateError, PromptTemplateLoader

@@ -6,9 +6,11 @@ import type {
   TaskDetailResponse,
   TaskListResponse,
   ReportConfiguration,
+  EvidenceItem,
+  StructuredReportResponse,
 } from '../types/api'
 
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000'
+const DEFAULT_API_BASE_URL = ''
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, '')
 
 interface ApiErrorBody {
@@ -68,9 +70,14 @@ export function getTaskStatus(taskId: string): Promise<TaskStatusResponse> {
 export function getTaskReport(taskId: string): Promise<TaskReportResponse> {
   return requestJson<TaskReportResponse>(`${API_BASE_URL}/api/tasks/${taskId}/report`)
 }
+export function getStructuredReport(taskId: string): Promise<StructuredReportResponse> {
+  return requestJson<StructuredReportResponse>(`${API_BASE_URL}/api/tasks/${taskId}/report/structured`)
+}
 
-export function listTasks(limit = 20, offset = 0): Promise<TaskListResponse> {
+export function listTasks(limit = 20, offset = 0, search = '', status = ''): Promise<TaskListResponse> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (search) params.set('search', search)
+  if (status) params.set('status', status)
   return requestJson<TaskListResponse>(`${API_BASE_URL}/api/tasks?${params}`)
 }
 
@@ -84,4 +91,21 @@ export function cancelTask(taskId: string): Promise<TaskStatusResponse> {
 
 export function retryTask(taskId: string): Promise<TaskCreateResponse> {
   return requestJson<TaskCreateResponse>(`${API_BASE_URL}/api/tasks/${taskId}/retry`, { method: 'POST' })
+}
+
+export function resumeTask(taskId: string): Promise<TaskStatusResponse> {
+  return requestJson(`${API_BASE_URL}/api/tasks/${taskId}/resume`, { method: 'POST' })
+}
+export function rerunTask(taskId: string): Promise<TaskCreateResponse> {
+  return requestJson(`${API_BASE_URL}/api/tasks/${taskId}/rerun`, { method: 'POST' })
+}
+export async function deleteTask(taskId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error(`Delete failed (${response.status})`)
+}
+export function evidence(taskId: string, evidenceId: string): Promise<EvidenceItem> {
+  return requestJson(`${API_BASE_URL}/api/tasks/${taskId}/evidence/${encodeURIComponent(evidenceId)}`)
+}
+export function taskEventsUrl(taskId: string, after = 0): string {
+  return `${API_BASE_URL}/api/tasks/${taskId}/events?after=${after}`
 }
