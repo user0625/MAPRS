@@ -322,19 +322,15 @@ RUN_REAL_LLM_TESTS=1 uv run pytest backend/tests/test_orchestrator_real.py -v -s
 
 ## 12. Development Roadmap
 
-- 支持 arXiv ID、论文 URL 和远程 PDF 输入。
-- 增加扫描版 PDF 的 OCR 与更可靠的标题、作者、摘要提取。
-- 增加章节识别、表格和图片理解。
-- 使用 FAISS、Qdrant、Milvus 等持久化或可扩展向量存储。
-- 增加证据去重、引用校验和检索质量评估。
-- 将独立任务并行化，并支持可恢复的任务图执行。
-- 提供 Streamlit 或其他前端 UI。
-- 使用 Redis/数据库持久化任务状态，并采用 Celery/RQ 等可靠任务队列。
-- 使用 WebSocket/SSE 推送任务进度。
-- 增加认证、上传与调用限流以及生产部署方案。
-- 增加请求缓存、token/成本指标和更完整的 Metrics/Tracing。
-- 支持更多模型厂商、本地模型和 vendor-specific structured output。
-- 增加批量论文、跨论文比较和文献综述能力。
+已完成的基础能力包括 React Web UI、PostgreSQL/SQLite 持久化、Redis + Celery 任务队列、可恢复 SSE、结构化报告与 Evidence，以及单篇论文 Ask Paper。后续工作按优先级为：
+
+1. **检索与问答质量**：BM25/向量混合召回、Rerank、持久化向量库、检索评估集，以及 Ask Paper 忠实度、引用和 prompt-injection 专项回归。
+2. **文档理解**：OCR、复杂多栏版面、表格、公式、图片与图注，并保留可引用的位置关系。
+3. **Ask Paper 深化**：页码范围、会话搜索/删除/导出、更精细的上下文压缩和成本统计。
+4. **多论文研究**：批量/arXiv/DOI/URL 输入、跨论文证据检索、对比矩阵、研究脉络与文献综述。
+5. **可靠执行与运维**：可恢复任务图、Worker 水平扩容、Metrics/Tracing、Secret 管理、数据库备份和生产迁移流程。
+6. **产品安全**：认证、租户隔离、上传与调用限流、用户配额、审计、安全响应头和数据保留策略。
+7. **模型生态**：更多厂商、本地模型和 vendor-specific structured output，并建立 token、延迟和成本看板。
 
 ## 13. Notes and Limitations
 
