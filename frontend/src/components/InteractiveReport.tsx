@@ -29,6 +29,7 @@ export function InteractiveReport({ taskId, markdown, compact = false }: Props) 
   const returnFocus = useRef<HTMLElement | null>(null)
   const closeButton = useRef<HTMLButtonElement | null>(null)
   const sectionsContainer = useRef<HTMLElement | null>(null)
+  const scrollFrame = useRef<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -48,10 +49,22 @@ export function InteractiveReport({ taskId, markdown, compact = false }: Props) 
   useEffect(() => { setMatch(-1) }, [query, taskId])
   useEffect(() => {
     if (!selected) return
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { setSelected(null); returnFocus.current?.focus() } }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setSelected(null); returnFocus.current?.focus() }
+      if (event.key === 'Tab') {
+        const drawer = closeButton.current?.closest('[role="dialog"]')
+        const focusable = drawer?.querySelectorAll<HTMLElement>('button, a[href], [tabindex]:not([tabindex="-1"])')
+        if (!focusable?.length) return
+        const first = focusable[0]; const last = focusable[focusable.length - 1]
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+      }
+    }
     window.addEventListener('keydown', onKey); closeButton.current?.focus()
     return () => window.removeEventListener('keydown', onKey)
   }, [selected])
+
+  useEffect(() => () => { if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current) }, [])
 
   const go = (id: string) => {
     const container = sectionsContainer.current
@@ -70,6 +83,18 @@ export function InteractiveReport({ taskId, markdown, compact = false }: Props) 
     if (sectionsContainer.current) sectionsContainer.current.scrollTop = 0
   }
   const move = (delta: number) => { if (!matches.length) return; const next = (match + delta + matches.length) % matches.length; setMatch(next); go(matches[next].id) }
+  const trackCurrentSection = () => {
+    if (scrollFrame.current !== null) return
+    scrollFrame.current = requestAnimationFrame(() => {
+      scrollFrame.current = null
+      const container = sectionsContainer.current
+      if (!container) return
+      const threshold = container.getBoundingClientRect().top + 32
+      const current = [...container.querySelectorAll<HTMLElement>(':scope > section')]
+        .filter(section => section.getBoundingClientRect().top <= threshold).at(-1)
+      setActive(current?.id || '')
+    })
+  }
   const openEvidence = async (id: string, button: HTMLButtonElement) => {
     returnFocus.current = button; setSelected(id); setEvidenceError(null)
     if (cache[id]) return
@@ -86,11 +111,11 @@ export function InteractiveReport({ taskId, markdown, compact = false }: Props) 
     </div>
     {loadError && <div className="structured-warning" role="status">Interactive navigation unavailable: {loadError} <button onClick={() => setRetry(value => value + 1)}>Retry</button></div>}
     {!structured ? <article className="markdown-body"><Markdown>{markdown}</Markdown></article> : <>
-      <div className="report-search"><label>Search report<input type="search" value={query} onChange={event => event.target.value ? setQuery(event.target.value) : resetNavigation()} /></label><span>{query ? `${matches.length} matching sections` : `${items.length} sections`}</span><button type="button" disabled={!query || !matches.length} onClick={() => move(-1)}>Previous</button><button type="button" disabled={!query || !matches.length} onClick={() => move(1)}>Next</button>{(query || active) && <button type="button" onClick={resetNavigation}>Reset</button>}</div>
+      <div className="report-search"><label>Search report<input type="search" value={query} onChange={event => event.target.value ? setQuery(event.target.value) : resetNavigation()} /></label><span aria-live="polite">{query ? `${matches.length} matching sections` : `${items.length} sections`}</span><button type="button" disabled={!query || !matches.length} onClick={() => move(-1)}>Previous</button><button type="button" disabled={!query || !matches.length} onClick={() => move(1)}>Next</button>{(query || active) && <button type="button" onClick={resetNavigation}>Reset</button>}</div>
       {query && !matches.length && <p className="report-no-results" role="status">No matching sections.</p>}
       <details className="report-mobile-toc"><summary>Contents</summary><nav><button type="button" onClick={resetNavigation}>Overview</button>{items.map(item => <button type="button" className={query && matches.some(matchItem => matchItem.id === item.id) ? 'search-result' : ''} key={item.id} onClick={() => go(item.id)}>{item.section.title}</button>)}</nav></details>
-      <div className="report-reader"><nav className="report-toc" aria-label="Report contents"><button type="button" className={!active ? 'active' : ''} onClick={resetNavigation}>Overview</button>{items.map(item => <button type="button" className={`${active === item.id ? 'active' : ''} ${query && matches.some(matchItem => matchItem.id === item.id) ? 'search-result' : ''}`} key={item.id} onClick={() => go(item.id)}>{item.section.title}</button>)}</nav>
-        <article ref={sectionsContainer} className="report-sections markdown-body">{items.map(({ section, id }) => <section id={id} key={id} className={query && matches.some(item => item.id === id) ? 'search-match' : ''}><h2>{section.title}</h2><Markdown>{section.content}</Markdown>{section.claims.length > 0 && <ul className="report-claims">{section.claims.map((claim, index) => <li key={index}>{claim.text}</li>)}</ul>}<div className="evidence-tags">{section.evidence_ids.map(evidenceId => <button type="button" key={evidenceId} onClick={event => void openEvidence(evidenceId, event.currentTarget)}>Evidence {evidenceId}</button>)}</div></section>)}</article>
+      <div className="report-reader"><nav className="report-toc" aria-label="Report contents"><button type="button" className={!active ? 'active' : ''} aria-current={!active ? 'location' : undefined} onClick={resetNavigation}>Overview</button>{items.map(item => <button type="button" className={`${active === item.id ? 'active' : ''} ${query && matches.some(matchItem => matchItem.id === item.id) ? 'search-result' : ''}`} aria-current={active === item.id ? 'location' : undefined} key={item.id} onClick={() => go(item.id)}>{item.section.title}</button>)}</nav>
+        <article ref={sectionsContainer} onScroll={trackCurrentSection} className="report-sections markdown-body">{items.map(({ section, id }) => <section id={id} key={id} className={query && matches.some(item => item.id === id) ? 'search-match' : ''}><h2>{section.title}</h2><Markdown>{section.content}</Markdown>{section.claims.length > 0 && <ul className="report-claims">{section.claims.map((claim, index) => <li key={index}>{claim.text}</li>)}</ul>}<div className="evidence-tags">{section.evidence_ids.map(evidenceId => <button type="button" key={evidenceId} onClick={event => void openEvidence(evidenceId, event.currentTarget)}>Evidence {evidenceId}</button>)}</div></section>)}</article>
       </div>
     </>}
     {selected && <aside className="evidence-drawer" role="dialog" aria-modal="true" aria-label={`Evidence ${selected}`}><header><strong>Evidence {selected}</strong><button ref={closeButton} aria-label="Close evidence" onClick={() => { setSelected(null); returnFocus.current?.focus() }}>×</button></header>{evidenceLoading && <p>Loading evidence…</p>}{evidenceError && <p role="alert">{evidenceError} <button onClick={() => { const target = returnFocus.current; if (target instanceof HTMLButtonElement) void openEvidence(selected, target) }}>Retry</button></p>}{selectedItem && <><dl><dt>Section</dt><dd>{selectedItem.section || '—'}</dd><dt>Pages</dt><dd>{selectedItem.page_start ?? '—'}–{selectedItem.page_end ?? '—'}</dd><dt>Chunk</dt><dd>{selectedItem.chunk_id || '—'}</dd></dl><blockquote>{selectedItem.text}</blockquote></>}</aside>}
