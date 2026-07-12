@@ -13,6 +13,8 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读场景的全栈
 ## 📝 最近更新
 
 - `2026-07-12`
+  - Ask Paper：新增仅面向已完成单篇论文任务的独立问答工作区，支持多轮会话、全篇/章节范围、自动/中英文回答、Evidence 回溯和会话标题编辑。
+  - 持久化流式恢复：问答消息、Evidence 和 token 事件写入数据库；Celery Worker 独立生成，浏览器刷新或断线后可按事件序号续传，且支持取消和失败重试。
   - CI 基线：GitHub Actions 在 push 与 pull request 上运行后端测试/Ruff、前端 lint/build、Compose 校验和前后端镜像构建；同分支旧任务自动取消，镜像仅构建不推送。
   - 交互报告：新建分析与任务历史共享结构化阅读组件，支持稳定目录、关键词定位、证据抽屉、旧报告 Markdown 回退及导航状态复原。
   - 容器化：新增 Node 20 + Nginx 前端生产镜像，Compose 统一启动 PostgreSQL、Redis、FastAPI、Celery Worker 与 Frontend。
@@ -46,7 +48,8 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读场景的全栈
 | 报告质量 | ✅ Phase D 核心完成 | 引用回溯、五维评分、真实 Verifier、最多一次自动修订 |
 | 工程稳定性 | ✅ Phase A 完成 | 请求重试、严格上传、去重、取消/重试、文件清理、Prompt 统计 |
 | 可靠任务队列 | ✅ 基础完成 | PostgreSQL 持久化、Redis Broker、独立 Celery Worker、检查点恢复与持久化 SSE |
-| Ask-the-Paper / 多论文 | 🗓️ 规划中 | Schema 与详情结构已预留，业务接口尚未实现 |
+| Ask-the-Paper | ✅ 单论文完成 | 持久化多轮会话、章节检索、流式恢复、Evidence、取消/重试与标题编辑 |
+| 多论文对话 | 🗓️ 规划中 | 当前 Ask Paper 会话仅绑定一个已完成任务 |
 
 ---
 
@@ -60,6 +63,7 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读场景的全栈
 - 📝 **外置 Prompt**：Prompt 以 Markdown 文件保存在 `backend/prompts/`，可不改 Agent 代码独立迭代。
 - ⚡ **同步与后台 API**：FastAPI 提供同步分析接口，后台任务由 Redis + Celery Worker 执行并将状态持久化到 PostgreSQL。
 - 🖥️ **完整 Web MVP**：React + TypeScript 前端支持新建分析与持久化任务历史；历史页展示论文信息、工作流时间线和 Markdown 报告。
+- 💬 **可恢复论文问答**：已完成任务可创建持久化会话；回答由 Worker 流式生成，断线续传且引用可回溯到论文分块。
 - 🧪 **离线 Mock 模式**：无需 API Key 或网络即可运行完整工作流和默认测试，适合开发与演示。
 - 🔌 **OpenAI-compatible 接口**：可接入 Qwen、DeepSeek、OpenAI 或其他兼容的 LLM/Embedding 服务。
 
@@ -221,8 +225,11 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 5. 等待任务从 `pending`、`running` 进入 `completed`；运行中可点击 **Cancel**。
 6. 在页面中阅读生成的 Markdown 报告。
 7. 使用目录或关键词在章节间定位，点击 Evidence 标签查看页码、分块和证据原文；Reset/Overview 可恢复完整目录与报告顶部。
+8. 切换到 **Ask Paper**，选择已完成论文并创建会话；可限定论文章节、覆盖回答语言、查看 Evidence，并按需重命名会话。
 
 切换到 **Task History** 可查看历史任务。`failed` 或 `canceled` 任务可点击 **Retry** 创建关联的新任务；原任务记录不会被覆盖。详情还会展示 Prompt Set 和结构化输出调用摘要。
+
+Ask Paper 的会话和消息跟随所属任务保存。关闭页面不会停止生成；重新进入会加载数据库中的消息，并从最后收到的事件继续流式显示。删除任务时，其会话、消息、流事件和问答 Evidence 会一并清理。
 
 示例 PDF 仅应在确认版权、隐私和再分发许可后加入公开仓库。
 

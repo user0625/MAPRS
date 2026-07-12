@@ -5,6 +5,7 @@ import { ReportViewer } from './components/ReportViewer'
 import { TaskStatusCard } from './components/TaskStatusCard'
 import { UploadPanel } from './components/UploadPanel'
 import { TaskHistory } from './components/TaskHistory'
+import { AskPaper } from './components/AskPaper'
 import type {
   OutputLanguage,
   TaskReportResponse,
@@ -17,7 +18,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'new' | 'history'>('new')
+  const [activeTab, setActiveTab] = useState<'new' | 'history' | 'ask'>('new')
   const [historyRefresh, setHistoryRefresh] = useState(0)
   const [taskId, setTaskId] = useState<string | null>(null)
   const live = useTaskEvents(taskId)
@@ -91,6 +92,7 @@ function App() {
         <nav className="workspace-tabs" aria-label="Workspace views">
           <button className={activeTab === 'new' ? 'active' : ''} onClick={() => setActiveTab('new')}>New Analysis</button>
           <button className={activeTab === 'history' ? 'active' : ''} onClick={() => setActiveTab('history')}>Task History</button>
+          <button className={activeTab === 'ask' ? 'active' : ''} onClick={() => setActiveTab('ask')}>Ask Paper</button>
         </nav>
 
         {activeTab === 'new' ? <div className="workspace-grid">
@@ -105,7 +107,8 @@ function App() {
             )}
             <ReportViewer report={report} loading={submitting} />
           </div>
-        </div> : <TaskHistory refreshToken={historyRefresh} />}
+        </div> : activeTab === 'history' ? <TaskHistory refreshToken={historyRefresh} /> :
+          <AskPaper initialTaskId={task?.status === 'completed' ? task.task_id : null} onOpenReport={(id) => { setTaskId(id); setActiveTab('new') }} />}
       </main>
 
       <footer>

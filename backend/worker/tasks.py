@@ -125,3 +125,17 @@ def enqueue_analysis(task_id: str, resume: bool = False) -> str:
     result = analyze_paper.apply_async(args=[task_id, resume])
     get_store().set_celery_task_id(task_id, result.id)
     return result.id
+
+
+@celery_app.task(
+    bind=True, autoretry_for=(ConnectionError, TimeoutError), retry_backoff=True
+)
+def answer_paper_question(self, message_id: str) -> None:
+    from backend.ask_paper import execute_answer
+
+    execute_answer(message_id)
+
+
+def enqueue_answer(message_id: str) -> str:
+    result = answer_paper_question.apply_async(args=[message_id])
+    return result.id

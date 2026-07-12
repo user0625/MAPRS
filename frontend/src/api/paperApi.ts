@@ -8,6 +8,7 @@ import type {
   ReportConfiguration,
   EvidenceItem,
   StructuredReportResponse,
+  Conversation, ConversationDetail, AskAccepted, AskLanguage,
 } from '../types/api'
 
 const DEFAULT_API_BASE_URL = ''
@@ -109,3 +110,12 @@ export function evidence(taskId: string, evidenceId: string): Promise<EvidenceIt
 export function taskEventsUrl(taskId: string, after = 0): string {
   return `${API_BASE_URL}/api/tasks/${taskId}/events?after=${after}`
 }
+
+export function listConversations(taskId:string):Promise<{items:Conversation[]}> { return requestJson(`${API_BASE_URL}/api/tasks/${taskId}/conversations`) }
+export function createConversation(taskId:string, language:AskLanguage='auto'):Promise<Conversation> { return requestJson(`${API_BASE_URL}/api/tasks/${taskId}/conversations`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({language})}) }
+export function getConversation(id:string):Promise<ConversationDetail> { return requestJson(`${API_BASE_URL}/api/conversations/${id}`) }
+export function updateConversationTitle(id:string,title:string):Promise<Conversation> { return requestJson(`${API_BASE_URL}/api/conversations/${id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})}) }
+export function askQuestion(id:string, content:string, section:string|null, language:AskLanguage):Promise<AskAccepted> { return requestJson(`${API_BASE_URL}/api/conversations/${id}/messages`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content,section,language})}) }
+export function cancelAnswer(conversationId:string,messageId:string) { return requestJson(`${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/cancel`,{method:'POST'}) }
+export function retryAnswer(conversationId:string,messageId:string):Promise<AskAccepted> { return requestJson(`${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/retry`,{method:'POST'}) }
+export function messageEventsUrl(conversationId:string,messageId:string,after=0) { return `${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/events?after=${after}` }

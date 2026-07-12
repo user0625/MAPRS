@@ -10,44 +10,41 @@ from backend.api.task_store import APITaskStatus
 
 
 class HealthResponse(BaseModel):
-  status: str = "ok"
-  service: str = "multi-agent-paper-reader"
+    status: str = "ok"
+    service: str = "multi-agent-paper-reader"
 
 
 class AnalyzeUploadResponse(BaseModel):
-  task_id: str
-  status: str
+    task_id: str
+    status: str
 
-  paper_title: str | None = None
-  paper_id: str | None = None
+    paper_title: str | None = None
+    paper_id: str | None = None
 
-  report_markdown: str
-  report_path: str | None = None
-  state_summary_path: str | None = None
+    report_markdown: str
+    report_path: str | None = None
+    state_summary_path: str | None = None
 
-  num_pages: int = 0
-  num_chunks: int = 0
-  num_evidence_items: int = 0
-  num_report_sections: int = 0
+    num_pages: int = 0
+    num_chunks: int = 0
+    num_evidence_items: int = 0
+    num_report_sections: int = 0
 
-  message: str = "Analysis completed successfully."
+    message: str = "Analysis completed successfully."
 
 
 class ErrorResponse(BaseModel):
-  detail: str
-  code: str | None = None
-  request_id: str | None = None
+    detail: str
+    code: str | None = None
+    request_id: str | None = None
 
 
 class AnalyzeLanguage(str):
-  ZH = "zh"
-  EN = "en"
+    ZH = "zh"
+    EN = "en"
 
 
 OutputLanguage = Literal["zh", "en"]
-
-
-
 
 
 class TaskCreateResponse(BaseModel):
@@ -155,3 +152,59 @@ class TaskDetailResponse(TaskStatusResponse):
     workflow_completed_at: datetime | None = None
     workflow_metadata: dict[str, Any] = Field(default_factory=dict)
     step_history: list[WorkflowStepSummary] | None = None
+
+
+class ConversationCreate(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    language: Literal["auto", "zh", "en"] = "auto"
+
+
+class ConversationUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+class ConversationResponse(BaseModel):
+    id: str
+    task_id: str
+    title: str
+    language: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationListResponse(BaseModel):
+    items: list[ConversationResponse]
+
+
+class AskMessageResponse(BaseModel):
+    id: str
+    conversation_id: str
+    role: str
+    content: str
+    status: str
+    language: str
+    section: str | None = None
+    citation_ids: list[str] = Field(default_factory=list)
+    error: str | None = None
+    retry_of: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationDetailResponse(ConversationResponse):
+    messages: list[AskMessageResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class AskMessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=8000)
+    section: str | None = Field(default=None, max_length=300)
+    language: Literal["auto", "zh", "en"] = "auto"
+
+
+class AskAcceptedResponse(BaseModel):
+    user_message_id: str | None
+    assistant_message_id: str
+    status: str

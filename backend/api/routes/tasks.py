@@ -299,6 +299,8 @@ def delete_task(task_id: str):
         raise HTTPException(
             status_code=409, detail="Only terminal tasks can be deleted."
         )
+    from backend.api.ask_store import AskStore
+    AskStore(task_store).delete_task_data(task_id)
     task_store.soft_delete(task_id)
 
 
@@ -473,6 +475,12 @@ def get_evidence(task_id: str, evidence_id: str) -> EvidenceResponse:
                 "section": item.get("section"),
                 "text": str(item.get("text", ""))[:2000],
             })
+    from backend.api.ask_store import AskStore
+    item = AskStore(task_store).evidence(task_id, evidence_id)
+    if item:
+        return EvidenceResponse(task_id=task_id, evidence_id=item.evidence_id,
+            chunk_id=item.chunk_id, page_start=item.page_start, page_end=item.page_end,
+            section=item.section, text=item.text[:2000])
     raise HTTPException(status_code=404, detail="Evidence not found for this task.")
 
 

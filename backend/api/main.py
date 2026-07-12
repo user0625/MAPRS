@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from backend.api.routes.analysis import router as analysis_router
 from backend.api.routes.health import router as health_router
 from backend.api.routes.tasks import router as tasks_router
+from backend.api.routes.conversations import router as conversations_router
 from backend.api import task_store as task_store_module
 from backend.api.task_store import DatabaseTaskStore
 from backend.core.config import get_settings
@@ -81,7 +82,7 @@ def create_app() -> FastAPI:
 
   @app.exception_handler(StarletteHTTPException)
   async def http_error(request: Request, exc: StarletteHTTPException):
-    codes = {400: "validation", 404: "not_found", 409: "conflict", 413: "validation"}
+    codes = {400: "validation", 404: "not_found", 409: "conflict", 413: "validation", 422: "validation"}
     return JSONResponse(status_code=exc.status_code, content={"detail": str(exc.detail),
       "code": codes.get(exc.status_code, "workflow"), "request_id": request.state.request_id})
 
@@ -93,6 +94,7 @@ def create_app() -> FastAPI:
   app.include_router(health_router)
   app.include_router(analysis_router)
   app.include_router(tasks_router)
+  app.include_router(conversations_router)
 
   return app
 

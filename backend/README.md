@@ -21,6 +21,7 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读的多智能体
 - 支持 OpenAI-compatible LLM 和 embedding API，例如阿里云百炼 Qwen。
 - 通过 CLI 输出中文或英文 Markdown 报告，并可选保存完整运行状态 JSON。
 - 提供 FastAPI 同步上传分析、Celery 后台任务 API，以及健康检查、任务状态、报告查询和 Swagger/ReDoc 文档。
+- 为已完成任务提供持久化 Ask Paper 会话、章节检索、流式回答恢复、Evidence、取消和失败重试。
 - 为 LLM 与 embedding 提供统一超时、指数退避和有限总预算；仅重试连接错误、超时、429 与 5xx。
 - 严格校验 PDF 上传并支持活动任务去重、协作式取消、失败/取消后重试和文件保留期清理。
 - 记录 Prompt Set、模板哈希及结构化输出成功/重试/失败统计，不保存模型原始响应。
@@ -249,6 +250,25 @@ curl http://127.0.0.1:8000/api/tasks/{task_id}/detail
 ```
 
 详情可返回论文标题、作者、工作流步骤摘要和可用的 Markdown 报告；不会返回论文全文分块、Agent 原始中间内容、模型原始响应或 API Key。
+
+### Ask Paper API
+
+Ask Paper 仅接受已完成且 state 产物可用的单篇论文任务。会话、消息、Evidence 和流事件保存在任务数据库中，生成由 Celery Worker 执行，因此浏览器断开不会取消回答。
+
+```text
+POST  /api/tasks/{task_id}/conversations
+GET   /api/tasks/{task_id}/conversations
+GET   /api/conversations/{conversation_id}
+PATCH /api/conversations/{conversation_id}
+POST  /api/conversations/{conversation_id}/messages
+GET   /api/conversations/{conversation_id}/messages/{message_id}/events?after={sequence}
+POST  /api/conversations/{conversation_id}/messages/{message_id}/cancel
+POST  /api/conversations/{conversation_id}/messages/{message_id}/retry
+```
+
+SSE 事件包括 `token`、`completed`、`failed`、`canceled` 和 `heartbeat`。客户端可使用 `after` 或 `Last-Event-ID` 恢复；事件序号和最终消息正文都来自持久化存储。问答 Evidence ID 使用消息命名空间，并可通过现有 `GET /api/tasks/{task_id}/evidence/{evidence_id}` 查询。
+
+数据库升级由 `backend/migrations/versions/0002_ask_paper.py` 提供。任务删除时会同步清理其全部问答数据。
 
 后台上传接口只接受 `.pdf`、`application/pdf` 或 `application/octet-stream`，并校验 `%PDF-` 文件头和大小。相同 SHA-256、标准化 query 与 language 的活动任务会复用原 `task_id`。取消在工作流阶段边界生效；重试仅适用于 `failed/canceled`，并创建通过 `retry_of` 关联的新任务。
 
