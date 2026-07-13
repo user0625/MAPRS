@@ -128,7 +128,7 @@ uv run python -m backend.app.cli --help
 
 ## 8. Environment Configuration
 
-应用从 `backend/.env` 读取配置。请复制 `.env.example` 后修改，切勿提交包含真实密钥的 `.env`。
+应用从 `backend/.env` 读取配置。请复制 `.env.example` 后修改，切勿提交包含真实密钥的 `.env`。该文件曾被 Git 跟踪；停止跟踪不会清除既有历史，因此任何曾写入其中的真实 API key 都必须在对应服务商侧轮换。
 
 ### Offline mock mode
 
@@ -190,7 +190,9 @@ uv run python -m backend.evaluation.ask_paper --mode all --gate \
   --output backend/outputs/logs/ask-paper-eval.json
 ```
 
-JSON 报告分别保留 BM25、原始 hybrid、filtered-hybrid 和 embedding degraded 运行。当前 filtered-hybrid 在固定夹具上的 Recall@6 为 100%，噪声率为 53.57%；该噪声水平仍然偏高，且夹具阈值 `1.0` 与生产默认值 `0.0` 不一致，所以结果仅用于验证过滤方向和防止回归，不代表生产质量达标。完整的数据字段、限制、指标公式和后续计划见 [`evaluation/README.md`](evaluation/README.md)。
+JSON 报告分别保留 BM25、原始 hybrid、filtered-hybrid 和 embedding degraded 运行。当前 filtered-hybrid 在固定夹具上的 Recall@6 为 100%，噪声率为 53.57%；该噪声水平仍然偏高，且夹具阈值 `1.0` 与生产默认值 `0.0` 不一致，所以结果仅用于验证过滤方向和防止回归，不代表生产质量达标。
+
+真实私有评估的基础设施已完成：仓库提供脱敏 Schema/fixture，以及候选生成、production profile 校验、validation 阈值校准、test 内容冻结和单次冻结质量门。`pilot-v1` 的 122 条样本仅用于工程链路验证，其中 validation 为 20 条；本轮未运行 frozen-test，validation 有 8 项硬门槛失败，所以当前最稳妥基线仍是 BM25，reranker 保持 `disabled`。完整的数据字段、限制、CLI 和指标口径见 [`evaluation/README.md`](evaluation/README.md)。
 
 ### Offline demo
 
@@ -375,9 +377,9 @@ RUN_REAL_LLM_TESTS=1 uv run pytest backend/tests/test_orchestrator_real.py -v -s
 
 已完成的基础能力包括 React Web UI、PostgreSQL/SQLite 持久化、Redis + Celery 任务队列、可恢复 SSE、结构化报告与 Evidence，以及单篇论文 Ask Paper。后续工作按优先级为：
 
-1. **检索与问答质量**：已完成 Ask Paper BM25/向量混合召回、RRF、无效向量过滤、可选 reranker、双阈值拒答、改写降级、引用白名单和分组评估框架。下一步建立真实人工标注集，按论文拆分验证/冻结测试并校准生产阈值。持久化向量库不属于本轮范围。
+1. **Ask Paper 会话管理**：下一产品阶段增加会话搜索、删除，以及 Markdown/JSON 导出。
 2. **文档理解**：OCR、复杂多栏版面、表格、公式、图片与图注，并保留可引用的位置关系。
-3. **Ask Paper 深化**：页码范围、会话搜索/删除/导出、更精细的上下文压缩和成本统计。
+3. **检索与问答质量**：私有评估 Schema、CLI、validation 校准、test 冻结和质量门基础设施已完成；继续扩展人工标注并解决 pilot validation 的 8 项失败，在冻结测试通过前维持 BM25 与 reranker `disabled`。
 4. **多论文研究**：批量/arXiv/DOI/URL 输入、跨论文证据检索、对比矩阵、研究脉络与文献综述。
 5. **可靠执行与运维**：可恢复任务图、Worker 水平扩容、Metrics/Tracing、Secret 管理、数据库备份和生产迁移流程。
 6. **产品安全**：认证、租户隔离、上传与调用限流、用户配额、审计、安全响应头和数据保留策略。

@@ -1,0 +1,10 @@
+{
+  "document": {
+    "metadata": {"paper_id": "anonymized-source"},
+    "chunks": [
+      {"chunk_id": "c-method", "section": "Methods", "page_start": 2, "text": "The anonymized method combines lexical and semantic retrieval."},
+      {"chunk_id": "c-result", "section": "Results", "page_start": 3, "text": "The anonymized evaluation reports improved retrieval precision."},
+      {"chunk_id": "c-noise", "section": "Methods", "page_start": 2, "text": "This nearby passage is a deliberately confusing control."}
+    ]
+  }
+}

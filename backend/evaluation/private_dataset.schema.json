@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paper-eval-v1",
+  "title": "Private paper evaluation JSONL row",
+  "description": "Authoritative runtime validation is EvaluationCase in backend/evaluation/real_dataset.py.",
+  "type": "object",
+  "required": ["schema_version", "id", "paper_id", "split", "language", "question", "answerable", "relevant_chunk_ids", "minimum_evidence_sets", "distractor_type", "review_status", "frozen"],
+  "properties": {
+    "schema_version": {"const": "paper-eval-v1"},
+    "id": {"type": "string", "minLength": 1},
+    "paper_id": {"type": "string", "minLength": 1},
+    "split": {"enum": ["analysis", "validation", "test"]},
+    "language": {"enum": ["zh", "en"]},
+    "question": {"type": "string", "minLength": 1},
+    "section": {"type": ["string", "null"]},
+    "answerable": {"type": "boolean"},
+    "relevant_chunk_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "minimum_evidence_sets": {"type": "array", "items": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true}},
+    "distractor_type": {"enum": ["same_section", "cross_section", "synonym", "not_in_paper", "none"]},
+    "review_status": {"enum": ["candidate", "reviewed", "rejected"]},
+    "reviewer_notes": {"type": ["string", "null"]},
+    "frozen": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

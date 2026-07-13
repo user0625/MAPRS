@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import re
@@ -68,6 +69,7 @@ class RetrievalDiagnostics:
     reranker_latency_ms: float | None = None
     reranker_top_score: float | None = None
     reranker_applied: bool = False
+    reranker_rank_changes: int = 0
     answerable: bool = True
     evidence_threshold: float | None = None
     answerability_threshold: float | None = None
@@ -279,10 +281,17 @@ class AskPaperRetrievalService:
                 logger.warning("Ask Paper reranker degraded: %s", type(exc).__name__)
             reranker_latency_ms = (time.perf_counter() - started) * 1000
         ranked_candidates = ordered_candidates
-        if mode == "enabled" and reranker_scores is not None:
-            ranked_candidates = [pair for _, pair in sorted(
+        reranked_candidate_order = ordered_candidates
+        if reranker_scores is not None:
+            reranked_candidate_order = [pair for _, pair in sorted(
                 enumerate(ordered_candidates), key=lambda item: (-reranker_scores[item[0]], item[0])
             )]
+        if mode == "enabled" and reranker_scores is not None:
+            ranked_candidates = reranked_candidate_order
+        reranker_rank_changes = sum(
+            original[0] != reranked[0]
+            for original, reranked in zip(ordered_candidates, reranked_candidate_order)
+        )
         score_by_position = (
             {position: reranker_scores[i] for i, (position, _) in enumerate(ordered_candidates)}
             if reranker_scores is not None else {}
@@ -330,14 +339,20 @@ class AskPaperRetrievalService:
             candidate_scores=candidate_scores, reranker_mode=mode,
             reranker_latency_ms=reranker_latency_ms, reranker_top_score=top_score,
             reranker_applied=mode == "enabled" and reranker_scores is not None,
+            reranker_rank_changes=reranker_rank_changes,
             answerable=answerable, evidence_threshold=self.settings.ask_evidence_threshold,
             answerability_threshold=self.settings.ask_answerability_threshold,
             calibration_version=self.settings.ask_calibration_version,
         )
         logger.info(
-            "Ask Paper retrieval query=%r bm25=%d vector=%d/%d removed=%d rrf=%d degraded=%s final=%d",
-            query[:240], len(lexical), len(semantic), len(semantic_raw),
-            len(semantic_raw) - len(semantic), len(fused), degraded, len(final),
+            "Ask Paper retrieval query_sha256=%s bm25=%d vector=%d/%d removed=%d rrf=%d "
+            "reranker_mode=%s reranker_ms=%s top_score=%s rank_changes=%d degraded=%s returned=%d",
+            hashlib.sha256(query.encode("utf-8")).hexdigest()[:12],
+            len(lexical), len(semantic), len(semantic_raw), len(semantic_raw) - len(semantic),
+            len(fused), mode,
+            f"{reranker_latency_ms:.2f}" if reranker_latency_ms is not None else "none",
+            f"{top_score:.4f}" if top_score is not None else "none",
+            reranker_rank_changes, degraded, len(final),
         )
         return RetrievalResult([
             (score_by_position.get(position, score), index.chunks[position]) for position, score in final

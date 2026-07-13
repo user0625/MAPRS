@@ -1,0 +1,5 @@
+{"paper_id":"paper-a","state_path":"state.json","split":"test","state_sha256":"49e3045b42071edf47767d1633c7420116b9a5aaaad9c039ca4fbb70dae8f2b2","chunk_ids":["c-method","c-result","c-noise"]}
+{"paper_id":"paper-b","state_path":"state.json","split":"analysis","state_sha256":"49e3045b42071edf47767d1633c7420116b9a5aaaad9c039ca4fbb70dae8f2b2","chunk_ids":["c-method","c-result","c-noise"]}
+{"paper_id":"paper-c","state_path":"state.json","split":"validation","state_sha256":"49e3045b42071edf47767d1633c7420116b9a5aaaad9c039ca4fbb70dae8f2b2","chunk_ids":["c-method","c-result","c-noise"]}
+{"paper_id":"paper-d","state_path":"state.json","split":"analysis","state_sha256":"49e3045b42071edf47767d1633c7420116b9a5aaaad9c039ca4fbb70dae8f2b2","chunk_ids":["c-method","c-result","c-noise"]}
+{"paper_id":"paper-e","state_path":"state.json","split":"analysis","state_sha256":"49e3045b42071edf47767d1633c7420116b9a5aaaad9c039ca4fbb70dae8f2b2","chunk_ids":["c-method","c-result","c-noise"]}

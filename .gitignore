@@ -14,6 +14,13 @@ backend/outputs/*
 backend/outputs/reports/*
 !backend/outputs/reports/example_report.md
 backend/logs/
+# Private paper evaluation inputs, annotations, calibration artifacts, and reports.
+# Only the anonymized fixture and public schema under backend/evaluation are tracked.
+backend/data/private_evaluation/
+backend/evaluation/private/
+backend/outputs/evaluation/
+# One-off target-v1 construction and QC scripts stay local with the private dataset.
+backend/scripts/*private_eval_target_v1*.py
 wheels/
 *.egg-info
 data_flow_processing_pipeline.png

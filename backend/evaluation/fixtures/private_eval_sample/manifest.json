@@ -1,0 +1,10 @@
+{
+  "schema_version": "paper-eval-v1",
+  "dataset_version": "anonymized-fixture-v1",
+  "created_at": "2026-01-01T00:00:00Z",
+  "split_seed": "fixture-seed",
+  "chunking_config": {"chunk_size": 1200, "chunk_overlap": 150},
+  "test_frozen": false,
+  "frozen_test_sha256": null,
+  "frozen_at": null
+}
