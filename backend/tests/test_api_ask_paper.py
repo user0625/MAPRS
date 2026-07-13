@@ -3,8 +3,15 @@ import json
 import anyio
 import httpx2
 import pytest
+from sqlmodel import Session, func, select
 
-from backend.api.ask_store import AskStore
+from backend.api.ask_store import (
+    AskStore,
+    MessageEvidence,
+    MessageStreamEvent,
+    PaperConversation,
+    PaperMessage,
+)
 from backend.api.main import create_app
 from backend.api.task_store import DatabaseTaskStore
 from backend.core.config import AppSettings
@@ -162,3 +169,125 @@ def test_sse_after_header_order_and_terminal_close(ask_api):
     all_events = client.get(f"/api/conversations/{cid}/messages/{message.id}/events").text
     assert all_events.index('"token": "A"') < all_events.index('"token": "B"') < all_events.index("event: completed")
     assert ask.get_message(message.id).content == "AB"
+
+
+def test_conversation_search_is_literal_case_insensitive_and_task_scoped(ask_api):
+    client, _, ask, _, completed = ask_api
+    completed("task-a")
+    completed("task-b")
+    title_match = ask.create_conversation("task-a", "Transformer NOTES")
+    content_match = ask.create_conversation("task-a", "Other")
+    percent_match = ask.create_conversation("task-a", "Accuracy 100%_literal")
+    assistant_match = ask.create_conversation("task-a", "Answer match")
+    isolated = ask.create_conversation("task-b", "Transformer notes")
+    ask.create_exchange(title_match.id, "also transformer", None, "auto")
+    ask.create_exchange(content_match.id, "Discuss TRANSFORMER scaling", None, "auto")
+    _, assistant = ask.create_exchange(assistant_match.id, "What is novel?", None, "auto")
+    ask.finish(assistant.id, "A Transformer-specific answer", [], [])
+
+    found = client.get("/api/tasks/task-a/conversations?search=transformer").json()["items"]
+    assert {item["id"] for item in found} == {
+        title_match.id,
+        content_match.id,
+        assistant_match.id,
+    }
+    assert len(found) == 3  # A title and message match still returns one row.
+    assert isolated.id not in {item["id"] for item in found}
+    assert [item["id"] for item in client.get(
+        "/api/tasks/task-a/conversations?search=%25"
+    ).json()["items"]] == [percent_match.id]
+    assert [item["id"] for item in client.get(
+        "/api/tasks/task-a/conversations?search=_literal"
+    ).json()["items"]] == [percent_match.id]
+    assert len(client.get("/api/tasks/task-a/conversations?search=%20%20").json()["items"]) == 4
+
+
+def test_delete_conversation_cleans_graph_and_preserves_neighbors(ask_api):
+    client, store, ask, _, completed = ask_api
+    completed("task-a")
+    doomed = ask.create_conversation("task-a", "Delete me")
+    kept = ask.create_conversation("task-a", "Keep me")
+    _, answer = ask.create_exchange(doomed.id, "question", None, "en")
+    ask.append_event(answer.id, "token", {"token": "answer"})
+
+    conflict = client.request("DELETE", f"/api/conversations/{doomed.id}")
+    assert conflict.status_code == 409
+    ask.finish(answer.id, "answer", [{
+        "evidence_id": "ev-delete", "task_id": "task-a", "text": "source",
+        "chunk_id": "chunk-delete", "page_start": 4, "page_end": 5,
+        "section": "Results", "score": 0.9,
+    }], ["ev-delete"])
+
+    assert client.request("DELETE", f"/api/conversations/{doomed.id}").status_code == 204
+    assert client.get(f"/api/conversations/{doomed.id}").status_code == 404
+    assert client.get(f"/api/conversations/{kept.id}").status_code == 200
+    assert store.get_task("task-a") is not None
+    with Session(store.engine) as session:
+        assert session.exec(select(PaperMessage).where(PaperMessage.conversation_id == doomed.id)).first() is None
+        assert session.exec(select(MessageEvidence).where(MessageEvidence.message_id == answer.id)).first() is None
+        assert session.exec(select(MessageStreamEvent).where(MessageStreamEvent.message_id == answer.id)).first() is None
+    assert client.request("DELETE", "/api/conversations/missing").status_code == 404
+
+
+def test_task_delete_reuses_complete_conversation_cleanup(ask_api):
+    client, store, ask, _, completed = ask_api
+    completed("task-a")
+    conversation = ask.create_conversation("task-a")
+    _, answer = ask.create_exchange(conversation.id, "question", None, "auto")
+    ask.finish(answer.id, "answer", [{
+        "evidence_id": "ev-task-delete", "task_id": "task-a", "text": "source",
+    }], ["ev-task-delete"])
+
+    assert client.request("DELETE", "/api/tasks/task-a").status_code == 204
+    with Session(store.engine) as session:
+        for model in (PaperConversation, PaperMessage, MessageEvidence, MessageStreamEvent):
+            assert session.exec(select(func.count()).select_from(model)).one() == 0
+
+
+def test_conversation_markdown_and_json_archives_only_cited_evidence(ask_api):
+    client, _, ask, _, completed = ask_api
+    completed("task-a")
+    conversation = ask.create_conversation("task-a", "研究 notes", "zh")
+    _, answer = ask.create_exchange(conversation.id, "What changed?", "Methods", "en")
+    ask.finish(answer.id, "It improved.", [
+        {
+            "evidence_id": "ev-used", "task_id": "task-a", "text": "Cited passage",
+            "chunk_id": "chunk-1", "page_start": 2, "page_end": 3,
+            "section": "Methods", "score": 0.875,
+        },
+        {
+            "evidence_id": "ev-unused", "task_id": "task-a", "text": "Candidate only",
+            "chunk_id": "chunk-2", "page_start": 9, "page_end": 9,
+            "section": "Appendix", "score": 0.1,
+        },
+    ], ["ev-used"])
+    _, failed = ask.create_exchange(conversation.id, "And limits?", None, "auto")
+    ask.fail(failed.id, "provider unavailable")
+
+    json_response = client.get(f"/api/conversations/{conversation.id}/artifacts/json")
+    assert json_response.status_code == 200
+    assert json_response.headers["content-type"].startswith("application/json; charset=utf-8")
+    assert json_response.headers["content-disposition"] == f'attachment; filename="ask-paper-{conversation.id}.json"'
+    archive = json_response.json()
+    assert archive["schema_version"] == "ask-paper-conversation-v1"
+    assert archive["conversation"]["task_id"] == "task-a"
+    assert [message["role"] for message in archive["messages"]] == [
+        "user", "assistant", "user", "assistant"
+    ]
+    assert archive["messages"][-1]["status"] == "failed"
+    assert [item["evidence_id"] for item in archive["evidence"]] == ["ev-used"]
+    assert archive["evidence"][0]["message_id"] == answer.id
+    assert archive["evidence"][0]["score"] == 0.875
+
+    markdown = client.get(f"/api/conversations/{conversation.id}/artifacts/markdown")
+    assert markdown.status_code == 200
+    assert markdown.headers["content-type"].startswith("text/markdown; charset=utf-8")
+    assert "# 研究 notes" in markdown.text
+    assert "**Task ID:** `task-a`" in markdown.text
+    assert "**Status:** `failed`" in markdown.text
+    assert "**Citation IDs:** `ev-used`" in markdown.text
+    assert "### ev-used" in markdown.text and "Cited passage" in markdown.text
+    assert "ev-unused" not in markdown.text and "Candidate only" not in markdown.text
+
+    ask.create_exchange(conversation.id, "still working", None, "auto")
+    assert client.get(f"/api/conversations/{conversation.id}/artifacts/json").status_code == 409

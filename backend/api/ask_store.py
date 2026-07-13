@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import Column, UniqueConstraint
+from sqlalchemy import Column, UniqueConstraint, case, or_
 from sqlmodel import Field, Session, SQLModel, func, select
 
 from backend.api.task_store import JSON_TYPE, DatabaseTaskStore, utcnow
@@ -70,6 +70,10 @@ class MessageStreamEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class ConversationGeneratingError(RuntimeError):
+    """Raised when destructive/read-only archive actions race an active answer."""
+
+
 class AskStore:
     def __init__(self, tasks: DatabaseTaskStore):
         self.tasks = tasks
@@ -93,13 +97,44 @@ class AskStore:
             session.refresh(row)
             return row
 
-    def list_conversations(self, task_id: str) -> list[PaperConversation]:
+    def list_conversations(
+        self, task_id: str, search: str | None = None
+    ) -> list[PaperConversation]:
         with Session(self.engine) as session:
+            statement = select(PaperConversation).where(
+                PaperConversation.task_id == task_id
+            )
+            term = (search or "").strip()
+            if term:
+                # LIKE wildcards are escaped so search remains a literal substring
+                # operation even when users enter %, _ or a backslash.
+                escaped = (
+                    term.lower()
+                    .replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                )
+                pattern = f"%{escaped}%"
+                statement = (
+                    statement.outerjoin(
+                        PaperMessage,
+                        PaperMessage.conversation_id == PaperConversation.id,
+                    )
+                    .where(
+                        or_(
+                            func.lower(PaperConversation.title).like(
+                                pattern, escape="\\"
+                            ),
+                            func.lower(PaperMessage.content).like(
+                                pattern, escape="\\"
+                            ),
+                        )
+                    )
+                    .distinct()
+                )
             return list(
                 session.exec(
-                    select(PaperConversation)
-                    .where(PaperConversation.task_id == task_id)
-                    .order_by(PaperConversation.updated_at.desc())
+                    statement.order_by(PaperConversation.updated_at.desc())
                 ).all()
             )
 
@@ -133,7 +168,11 @@ class AskStore:
             rows = session.exec(
                 select(PaperMessage)
                 .where(PaperMessage.conversation_id == conversation_id)
-                .order_by(PaperMessage.created_at, PaperMessage.id)
+                .order_by(
+                    PaperMessage.created_at,
+                    case((PaperMessage.role == "user", 0), else_=1),
+                    PaperMessage.id,
+                )
                 .offset(offset)
                 .limit(limit)
             ).all()
@@ -304,28 +343,107 @@ class AskStore:
                 )
             ).first()
 
+    @staticmethod
+    def _delete_conversation(session: Session, conversation: PaperConversation) -> None:
+        messages = session.exec(
+            select(PaperMessage).where(
+                PaperMessage.conversation_id == conversation.id
+            )
+        ).all()
+        message_ids = [message.id for message in messages]
+        if message_ids:
+            for event in session.exec(
+                select(MessageStreamEvent).where(
+                    MessageStreamEvent.message_id.in_(message_ids)
+                )
+            ).all():
+                session.delete(event)
+            for evidence in session.exec(
+                select(MessageEvidence).where(
+                    MessageEvidence.message_id.in_(message_ids)
+                )
+            ).all():
+                session.delete(evidence)
+            for message in messages:
+                session.delete(message)
+        session.delete(conversation)
+
+    def delete_conversation(self, conversation_id: str) -> bool:
+        """Delete one complete conversation graph in a single transaction."""
+        with Session(self.engine) as session:
+            conversation = session.get(PaperConversation, conversation_id)
+            if not conversation:
+                return False
+            generating = session.exec(
+                select(PaperMessage.id).where(
+                    PaperMessage.conversation_id == conversation_id,
+                    PaperMessage.status == MessageStatus.GENERATING,
+                )
+            ).first()
+            if generating:
+                raise ConversationGeneratingError(conversation_id)
+            self._delete_conversation(session, conversation)
+            session.commit()
+            return True
+
+    def conversation_archive(
+        self, conversation_id: str
+    ) -> tuple[PaperConversation, list[PaperMessage], list[MessageEvidence]] | None:
+        """Return an ordered archive snapshot containing cited evidence only."""
+        with Session(self.engine) as session:
+            conversation = session.get(PaperConversation, conversation_id)
+            if not conversation:
+                return None
+            messages = list(
+                session.exec(
+                    select(PaperMessage)
+                    .where(PaperMessage.conversation_id == conversation_id)
+                    .order_by(
+                        PaperMessage.created_at,
+                        case((PaperMessage.role == "user", 0), else_=1),
+                        PaperMessage.id,
+                    )
+                ).all()
+            )
+            if any(message.status == MessageStatus.GENERATING for message in messages):
+                raise ConversationGeneratingError(conversation_id)
+
+            cited_pairs = {
+                (message.id, evidence_id)
+                for message in messages
+                if message.role == "assistant"
+                for evidence_id in message.citation_ids
+            }
+            message_ids = [message.id for message in messages]
+            candidates = (
+                list(
+                    session.exec(
+                        select(MessageEvidence).where(
+                            MessageEvidence.message_id.in_(message_ids)
+                        )
+                    ).all()
+                )
+                if message_ids and cited_pairs
+                else []
+            )
+            by_pair = {
+                (item.message_id, item.evidence_id): item
+                for item in candidates
+                if (item.message_id, item.evidence_id) in cited_pairs
+            }
+            evidence = [
+                by_pair[pair]
+                for message in messages
+                for pair in ((message.id, evidence_id) for evidence_id in message.citation_ids)
+                if pair in by_pair
+            ]
+            return conversation, messages, evidence
+
     def delete_task_data(self, task_id: str) -> None:
         with Session(self.engine) as session:
             convs = session.exec(
                 select(PaperConversation).where(PaperConversation.task_id == task_id)
             ).all()
             for conv in convs:
-                messages = session.exec(
-                    select(PaperMessage).where(PaperMessage.conversation_id == conv.id)
-                ).all()
-                for message in messages:
-                    for event in session.exec(
-                        select(MessageStreamEvent).where(
-                            MessageStreamEvent.message_id == message.id
-                        )
-                    ).all():
-                        session.delete(event)
-                    for ev in session.exec(
-                        select(MessageEvidence).where(
-                            MessageEvidence.message_id == message.id
-                        )
-                    ).all():
-                        session.delete(ev)
-                    session.delete(message)
-                session.delete(conv)
+                self._delete_conversation(session, conv)
             session.commit()

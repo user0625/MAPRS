@@ -18,22 +18,22 @@ interface ApiErrorBody {
   detail?: string
 }
 
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  let message = fallback
+  try {
+    const body = (await response.json()) as ApiErrorBody
+    if (typeof body.detail === 'string') message = body.detail
+  } catch {
+    // Keep the HTTP status fallback when the response is not JSON.
+  }
+  return new Error(message)
+}
+
 async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init)
 
   if (!response.ok) {
-    let message = `Request failed (${response.status})`
-
-    try {
-      const body = (await response.json()) as ApiErrorBody
-      if (typeof body.detail === 'string') {
-        message = body.detail
-      }
-    } catch {
-      // Keep the HTTP status fallback when the response is not JSON.
-    }
-
-    throw new Error(message)
+    throw await responseError(response, `Request failed (${response.status})`)
   }
 
   return (await response.json()) as T
@@ -111,10 +111,35 @@ export function taskEventsUrl(taskId: string, after = 0): string {
   return `${API_BASE_URL}/api/tasks/${taskId}/events?after=${after}`
 }
 
-export function listConversations(taskId:string):Promise<{items:Conversation[]}> { return requestJson(`${API_BASE_URL}/api/tasks/${taskId}/conversations`) }
+export function listConversations(taskId:string, search=''):Promise<{items:Conversation[]}> {
+  const params = new URLSearchParams()
+  if (search.trim()) params.set('search', search)
+  const query = params.size ? `?${params}` : ''
+  return requestJson(`${API_BASE_URL}/api/tasks/${taskId}/conversations${query}`)
+}
 export function createConversation(taskId:string, language:AskLanguage='auto'):Promise<Conversation> { return requestJson(`${API_BASE_URL}/api/tasks/${taskId}/conversations`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({language})}) }
 export function getConversation(id:string):Promise<ConversationDetail> { return requestJson(`${API_BASE_URL}/api/conversations/${id}`) }
 export function updateConversationTitle(id:string,title:string):Promise<Conversation> { return requestJson(`${API_BASE_URL}/api/conversations/${id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})}) }
+export async function deleteConversation(id:string):Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/conversations/${id}`, {method:'DELETE'})
+  if (!response.ok) throw await responseError(response, `Delete failed (${response.status})`)
+}
+export async function downloadConversationArtifact(id:string, format:'markdown'|'json'):Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/conversations/${id}/artifacts/${format}`)
+  if (!response.ok) throw await responseError(response, `Download failed (${response.status})`)
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const matched = /filename="?([^";]+)"?/i.exec(disposition)
+  const filename = matched?.[1] || `ask-paper-${id}.${format === 'markdown' ? 'md' : 'json'}`
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
 export function askQuestion(id:string, content:string, section:string|null, language:AskLanguage):Promise<AskAccepted> { return requestJson(`${API_BASE_URL}/api/conversations/${id}/messages`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content,section,language})}) }
 export function cancelAnswer(conversationId:string,messageId:string) { return requestJson(`${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/cancel`,{method:'POST'}) }
 export function retryAnswer(conversationId:string,messageId:string):Promise<AskAccepted> { return requestJson(`${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/retry`,{method:'POST'}) }

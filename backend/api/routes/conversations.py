@@ -3,11 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
-from backend.api.ask_store import AskStore, MessageStatus
+from backend.api.ask_store import (
+    AskStore,
+    ConversationGeneratingError,
+    MessageStatus,
+)
 from backend.api.schemas import (
     AskAcceptedResponse,
     AskMessageCreate,
@@ -67,13 +72,15 @@ async def create_conversation(task_id: str, body: ConversationCreate) -> Convers
 @router.get(
     "/api/tasks/{task_id}/conversations", response_model=ConversationListResponse
 )
-async def list_conversations(task_id: str) -> ConversationListResponse:
+async def list_conversations(
+    task_id: str, search: str | None = Query(default=None, max_length=8000)
+) -> ConversationListResponse:
     completed_task(task_id)
     _, ask = stores()
     return ConversationListResponse(
         items=[
             ConversationResponse.model_validate(x, from_attributes=True)
-            for x in ask.list_conversations(task_id)
+            for x in ask.list_conversations(task_id, search)
         ]
     )
 
@@ -112,6 +119,55 @@ async def update_conversation(
     if not row:
         raise HTTPException(404, "Conversation not found.")
     return ConversationResponse.model_validate(row, from_attributes=True)
+
+
+@router.delete("/api/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(conversation_id: str) -> Response:
+    conversation_or_404(conversation_id)
+    _, ask = stores()
+    try:
+        deleted = ask.delete_conversation(conversation_id)
+    except ConversationGeneratingError as exc:
+        raise HTTPException(
+            409,
+            "Cancel the generating answer and wait for it to finish before deleting this conversation.",
+        ) from exc
+    if not deleted:
+        raise HTTPException(404, "Conversation not found.")
+    return Response(status_code=204)
+
+
+@router.get("/api/conversations/{conversation_id}/artifacts/{format}")
+async def get_conversation_artifact(
+    conversation_id: str, format: Literal["markdown", "json"]
+) -> Response:
+    conversation_or_404(conversation_id)
+    _, ask = stores()
+    try:
+        archive = ask.conversation_archive(conversation_id)
+    except ConversationGeneratingError as exc:
+        raise HTTPException(
+            409,
+            "Cancel the generating answer and wait for it to finish before exporting this conversation.",
+        ) from exc
+    if not archive:
+        raise HTTPException(404, "Conversation not found.")
+
+    from backend.exporters.conversation_exporter import export_json, export_markdown
+
+    conversation, messages, evidence = archive
+    if format == "markdown":
+        content = export_markdown(conversation, messages, evidence)
+        extension, media_type = "md", "text/markdown; charset=utf-8"
+    else:
+        content = export_json(conversation, messages, evidence)
+        extension, media_type = "json", "application/json; charset=utf-8"
+    filename = f"ask-paper-{conversation.id}.{extension}"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def validate_section(task, section: str | None):

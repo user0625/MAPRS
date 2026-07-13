@@ -287,7 +287,7 @@ def resume_task(task_id: str) -> TaskStatusResponse:
 
 
 @router.delete("/{task_id}", status_code=204)
-def delete_task(task_id: str):
+async def delete_task(task_id: str):
     record = task_store.get_task(task_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Task not found.")

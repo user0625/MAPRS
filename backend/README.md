@@ -21,7 +21,7 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读的多智能体
 - 支持 OpenAI-compatible LLM 和 embedding API，例如阿里云百炼 Qwen。
 - 通过 CLI 输出中文或英文 Markdown 报告，并可选保存完整运行状态 JSON。
 - 提供 FastAPI 同步上传分析、Celery 后台任务 API，以及健康检查、任务状态、报告查询和 Swagger/ReDoc 文档。
-- 为已完成任务提供持久化 Ask Paper 会话、章节检索、流式回答恢复、Evidence、取消和失败重试。
+- 为已完成任务提供持久化 Ask Paper 会话、会话搜索/删除、Markdown/JSON 引用归档、章节检索、流式回答恢复、Evidence、取消和失败重试。
 - 为 LLM 与 embedding 提供统一超时、指数退避和有限总预算；仅重试连接错误、超时、429 与 5xx。
 - 严格校验 PDF 上传并支持活动任务去重、协作式取消、失败/取消后重试和文件保留期清理。
 - 记录 Prompt Set、模板哈希及结构化输出成功/重试/失败统计，不保存模型原始响应。
@@ -270,14 +270,18 @@ Ask Paper 仅接受已完成且 state 产物可用的单篇论文任务。会话
 
 ```text
 POST  /api/tasks/{task_id}/conversations
-GET   /api/tasks/{task_id}/conversations
+GET   /api/tasks/{task_id}/conversations?search={literal_substring}
 GET   /api/conversations/{conversation_id}
 PATCH /api/conversations/{conversation_id}
+DELETE /api/conversations/{conversation_id}
+GET   /api/conversations/{conversation_id}/artifacts/{markdown|json}
 POST  /api/conversations/{conversation_id}/messages
 GET   /api/conversations/{conversation_id}/messages/{message_id}/events?after={sequence}
 POST  /api/conversations/{conversation_id}/messages/{message_id}/cancel
 POST  /api/conversations/{conversation_id}/messages/{message_id}/retry
 ```
+
+`search` 对会话标题、用户消息和助手消息执行大小写不敏感的字面子串匹配，空白值等同完整列表，结果仍按 `updated_at` 倒序。删除会话返回 `204`，并在一个事务中清理消息、Evidence 和流事件；导出附件使用版本化 JSON Schema `ask-paper-conversation-v1` 或可读 Markdown，且只包含助手 `citation_ids` 实际引用的 Evidence。生成中的会话删除或导出返回 `409`。
 
 SSE 事件包括 `token`、`completed`、`failed`、`canceled` 和 `heartbeat`。客户端可使用 `after` 或 `Last-Event-ID` 恢复；事件序号和最终消息正文都来自持久化存储。问答 Evidence ID 使用消息命名空间，并可通过现有 `GET /api/tasks/{task_id}/evidence/{evidence_id}` 查询。
 
@@ -331,7 +335,7 @@ uv run pytest backend/tests -q -rs
 
 普通测试使用 mock 客户端，不需要网络。真实测试默认被跳过。
 
-Ask Paper API 使用每个测试独立的临时 SQLite 与 state 文件，并以确定性 fake 替换 Worker 调度。专项覆盖任务/会话隔离、章节校验、分页、错误状态、Evidence 任务归属、取消/重试，以及 SSE `after`、`Last-Event-ID`、token 顺序和终态关闭：
+Ask Paper API 使用每个测试独立的临时 SQLite 与 state 文件，并以确定性 fake 替换 Worker 调度。专项覆盖任务/会话隔离、字面搜索、级联删除与任务删除复用、Markdown/JSON 归档、章节校验、分页、错误状态、Evidence 任务归属、取消/重试，以及 SSE `after`、`Last-Event-ID`、token 顺序和终态关闭：
 
 ```bash
 uv run pytest backend/tests/test_api_ask_paper.py -q -rs
@@ -377,7 +381,7 @@ RUN_REAL_LLM_TESTS=1 uv run pytest backend/tests/test_orchestrator_real.py -v -s
 
 已完成的基础能力包括 React Web UI、PostgreSQL/SQLite 持久化、Redis + Celery 任务队列、可恢复 SSE、结构化报告与 Evidence，以及单篇论文 Ask Paper。后续工作按优先级为：
 
-1. **Ask Paper 会话管理**：下一产品阶段增加会话搜索、删除，以及 Markdown/JSON 导出。
+1. **Ask Paper 范围与上下文**：会话搜索、删除及 Markdown/JSON 引用归档已完成；下一阶段增加页码范围筛选和更精细的上下文窗口管理。
 2. **文档理解**：OCR、复杂多栏版面、表格、公式、图片与图注，并保留可引用的位置关系。
 3. **检索与问答质量**：私有评估 Schema、CLI、validation 校准、test 冻结和质量门基础设施已完成；继续扩展人工标注并解决 pilot validation 的 8 项失败，在冻结测试通过前维持 BM25 与 reranker `disabled`。
 4. **多论文研究**：批量/arXiv/DOI/URL 输入、跨论文证据检索、对比矩阵、研究脉络与文献综述。
