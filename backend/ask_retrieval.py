@@ -24,6 +24,18 @@ ENGLISH_STOPWORDS = frozenset({"a", "an", "and", "are", "for", "in", "is", "of",
 CHINESE_STOPWORDS = frozenset({"的", "了", "和", "是", "在", "与", "及", "中"})
 
 
+def _chunk_overlaps_pages(
+    chunk: dict[str, Any], page_start: int, page_end: int
+) -> bool:
+    raw_start = chunk.get("page_start")
+    raw_end = chunk.get("page_end")
+    chunk_start = raw_start if isinstance(raw_start, int) else raw_end
+    chunk_end = raw_end if isinstance(raw_end, int) else raw_start
+    if not isinstance(chunk_start, int) or not isinstance(chunk_end, int):
+        return False
+    return chunk_start <= page_end and chunk_end >= page_start
+
+
 def terms(text: str) -> list[str]:
     """Tokenize English words and Chinese characters/bigrams for lexical search."""
     result: list[str] = []
@@ -150,19 +162,34 @@ class AskPaperRetrievalService:
             df.update(document.keys())
         return RetrievalIndex(chunks, documents, [sum(x.values()) for x in documents], df)
 
-    def _cache_key(self, task_id: str, path: Path, section: str | None) -> tuple[Any, ...]:
+    def _cache_key(
+        self,
+        task_id: str,
+        path: Path,
+        section: str | None,
+        page_start: int | None,
+        page_end: int | None,
+    ) -> tuple[Any, ...]:
         return (
             task_id,
             path.stat().st_mtime_ns,
             section or "*",
+            page_start or "*",
+            page_end or "*",
             self.settings.embedding_provider,
             self.settings.embedding_model,
         )
 
     def _index(
-        self, task_id: str, path: Path, section: str | None, chunks: list[dict[str, Any]]
+        self,
+        task_id: str,
+        path: Path,
+        section: str | None,
+        page_start: int | None,
+        page_end: int | None,
+        chunks: list[dict[str, Any]],
     ) -> tuple[RetrievalIndex, str | None]:
-        key = self._cache_key(task_id, path, section)
+        key = self._cache_key(task_id, path, section, page_start, page_end)
         cached = self.cache.get(key)
         if cached is not None:
             return cached, cached.degraded_reason
@@ -231,6 +258,8 @@ class AskPaperRetrievalService:
         state_path: str,
         query: str,
         section: str | None = None,
+        page_start: int | None = None,
+        page_end: int | None = None,
     ) -> RetrievalResult:
         path = Path(state_path)
         import json
@@ -239,7 +268,20 @@ class AskPaperRetrievalService:
         chunks = [c for c in (state.get("document") or {}).get("chunks", []) if isinstance(c, dict)]
         if section:
             chunks = [c for c in chunks if c.get("section") == section]
-        index, degraded = self._index(task_id, path, section, chunks)
+        if page_start is not None and page_end is not None:
+            chunks = [
+                chunk
+                for chunk in chunks
+                if _chunk_overlaps_pages(chunk, page_start, page_end)
+            ]
+        index, degraded = self._index(
+            task_id,
+            path,
+            section,
+            page_start,
+            page_end,
+            chunks,
+        )
         candidate_count = self.settings.ask_candidate_count
         lexical = self.bm25(index, query, candidate_count)
         semantic_raw: list[tuple[int, float]] = []

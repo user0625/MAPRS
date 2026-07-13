@@ -102,6 +102,6 @@ export interface TaskDetailResponse extends TaskStatusResponse {
 
 export type AskLanguage = 'auto' | 'zh' | 'en'
 export interface Conversation { id:string; task_id:string; title:string; language:AskLanguage; created_at:string; updated_at:string }
-export interface AskMessage { id:string; conversation_id:string; role:'user'|'assistant'; content:string; status:'completed'|'generating'|'failed'|'canceled'; language:AskLanguage; section:string|null; citation_ids:string[]; error:string|null; retry_of:string|null; created_at:string; updated_at:string }
+export interface AskMessage { id:string; conversation_id:string; role:'user'|'assistant'; content:string; status:'completed'|'generating'|'failed'|'canceled'; language:AskLanguage; section:string|null; page_start:number|null; page_end:number|null; citation_ids:string[]; error:string|null; retry_of:string|null; created_at:string; updated_at:string }
 export interface ConversationDetail extends Conversation { messages:AskMessage[]; total:number; limit:number; offset:number }
 export interface AskAccepted { user_message_id:string|null; assistant_message_id:string; status:string }

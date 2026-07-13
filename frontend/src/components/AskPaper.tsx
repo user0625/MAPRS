@@ -28,6 +28,7 @@ export function AskPaper({ initialTaskId, onOpenReport }:{initialTaskId?:string|
   const [conversationSearch,setConversationSearch]=useState('')
   const [messages,setMessages]=useState<AskMessage[]>([]), [question,setQuestion]=useState(''), [language,setLanguage]=useState<AskLanguage>('auto')
   const [section,setSection]=useState('')
+  const [pageStart,setPageStart]=useState(''), [pageEnd,setPageEnd]=useState('')
   const [editingTitle,setEditingTitle]=useState(false), [titleDraft,setTitleDraft]=useState('')
   const [error,setError]=useState(''), [busy,setBusy]=useState(false), [action,setAction]=useState<ConversationAction>('')
   const [drawer,setDrawer]=useState<EvidenceItem|null>(null)
@@ -82,6 +83,8 @@ export function AskPaper({ initialTaskId, onOpenReport }:{initialTaskId?:string|
   },[generatingId,conversationId,consume,stop])
 
   const currentConversation=conversations.find(c=>c.id===conversationId)
+  const totalPages=taskPageCount(tasks.find(t=>t.task_id===taskId))
+  const pageRangeError=validatePageRange(pageStart,pageEnd,totalPages)
   const actionsDisabled=!conversationId||busy||Boolean(generatingId)||Boolean(action)
 
   async function newConversation(){
@@ -103,7 +106,9 @@ export function AskPaper({ initialTaskId, onOpenReport }:{initialTaskId?:string|
     setBusy(true);setError('')
     const text=question
     setQuestion('')
-    try{await askQuestion(conversationId,text,section||null,language);await refresh(conversationId)}
+    if(pageRangeError){setBusy(false);setQuestion(text);setError(pageRangeError);return}
+    const start=pageStart?Number(pageStart):null, end=pageEnd?Number(pageEnd):null
+    try{await askQuestion(conversationId,text,section||null,language,start,end);await refresh(conversationId)}
     catch(e){setBusy(false);setError(errorMessage(e))}
   }
 
@@ -153,7 +158,7 @@ export function AskPaper({ initialTaskId, onOpenReport }:{initialTaskId?:string|
   return <section className="ask-layout">
     <aside className="panel ask-sidebar">
       <h2>Ask Paper</h2>
-      <label>Completed paper<select data-testid="paper-select" className="paper-select" title={tasks.find(t=>t.task_id===taskId)?.paper_title||taskId} value={taskId} onChange={e=>{setTaskId(e.target.value);setDrawer(null)}}><option value="">Select a paper</option>{tasks.map(t=><option title={t.paper_title||t.task_id} key={t.task_id} value={t.task_id}>{t.paper_title||t.task_id}</option>)}</select></label>
+      <label>Completed paper<select data-testid="paper-select" className="paper-select" title={tasks.find(t=>t.task_id===taskId)?.paper_title||taskId} value={taskId} onChange={e=>{setTaskId(e.target.value);setSection('');setPageStart('');setPageEnd('');setDrawer(null)}}><option value="">Select a paper</option>{tasks.map(t=><option title={t.paper_title||t.task_id} key={t.task_id} value={t.task_id}>{t.paper_title||t.task_id}</option>)}</select></label>
       <button onClick={newConversation} disabled={!taskId}>+ New conversation</button>
       <label className="conversation-search">Search conversations<input aria-label="Search conversations" type="search" value={conversationSearch} onChange={e=>setConversationSearch(e.target.value)} placeholder="Title or message text" disabled={!taskId}/></label>
       <div data-testid="conversation-list" className="conversation-list">
@@ -172,8 +177,8 @@ export function AskPaper({ initialTaskId, onOpenReport }:{initialTaskId?:string|
           {taskId&&<button onClick={()=>onOpenReport(taskId)}>View report</button>}
         </div>
       </header>
-      <div data-testid="message-list" className="message-list">{!messages.length&&<div className="chat-empty"><strong>Ask a question about this paper</strong><span>Answers are grounded in retrieved passages and remain available after refresh.</span></div>}{messages.map(m=><article data-message-id={m.id} key={m.id} className={`chat-message ${m.role}`}><small>{m.role==='user'?'You':'Paper assistant'}</small><p>{m.content||(m.status==='generating'?'Thinking…':'')}</p>{m.citation_ids.length>0&&<div className="evidence-tags">{m.citation_ids.map(id=><button aria-label={`Evidence ${id}`} key={id} onClick={()=>showEvidence(id)}>{id.split(':').pop()}</button>)}</div>}{m.error&&<span className="message-error">{m.error}</span>}{m.status==='generating'&&<button onClick={async()=>{await cancelAnswer(conversationId,m.id);await refresh(conversationId)}}>Cancel</button>}{['failed','canceled'].includes(m.status)&&<button onClick={async()=>{await retryAnswer(conversationId,m.id);await refresh(conversationId)}}>Retry</button>}</article>)}</div>
-      <form className="ask-composer" onSubmit={submit}><textarea aria-label="Question" value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Ask about methods, findings, limitations…"/><div><select aria-label="Paper section" value={section} onChange={e=>setSection(e.target.value)}><option value="">Whole paper</option>{sectionNames(tasks.find(t=>t.task_id===taskId)).map(name=><option key={name}>{name}</option>)}</select><select aria-label="Answer language" value={language} onChange={e=>setLanguage(e.target.value as AskLanguage)}><option value="auto">Auto language</option><option value="zh">中文</option><option value="en">English</option></select><button className="primary-button" disabled={busy||!conversationId||!question.trim()}>Ask</button></div></form>
+      <div data-testid="message-list" className="message-list">{!messages.length&&<div className="chat-empty"><strong>Ask a question about this paper</strong><span>Answers are grounded in retrieved passages and remain available after refresh.</span></div>}{messages.map(m=><article data-message-id={m.id} key={m.id} className={`chat-message ${m.role}`}><small>{m.role==='user'?'You':'Paper assistant'}</small>{(m.section||m.page_start)&&<span className="message-scope">{[m.section,m.page_start?`Pages ${m.page_start}–${m.page_end}`:''].filter(Boolean).join(' · ')}</span>}<p>{m.content||(m.status==='generating'?'Thinking…':'')}</p>{m.citation_ids.length>0&&<div className="evidence-tags">{m.citation_ids.map(id=><button aria-label={`Evidence ${id}`} key={id} onClick={()=>showEvidence(id)}>{id.split(':').pop()}</button>)}</div>}{m.error&&<span className="message-error">{m.error}</span>}{m.status==='generating'&&<button onClick={async()=>{await cancelAnswer(conversationId,m.id);await refresh(conversationId)}}>Cancel</button>}{['failed','canceled'].includes(m.status)&&<button onClick={async()=>{await retryAnswer(conversationId,m.id);await refresh(conversationId)}}>Retry</button>}</article>)}</div>
+      <form className="ask-composer" onSubmit={submit}><textarea aria-label="Question" value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Ask about methods, findings, limitations…"/><div><select aria-label="Paper section" value={section} onChange={e=>setSection(e.target.value)}><option value="">Whole paper</option>{sectionNames(tasks.find(t=>t.task_id===taskId)).map(name=><option key={name}>{name}</option>)}</select><div className="page-range" aria-label="Page range"><input aria-label="From page" type="number" min="1" max={totalPages||undefined} step="1" value={pageStart} onChange={e=>setPageStart(e.target.value)} placeholder="From page"/><span>to</span><input aria-label="To page" type="number" min="1" max={totalPages||undefined} step="1" value={pageEnd} onChange={e=>setPageEnd(e.target.value)} placeholder={totalPages?`To ${totalPages}`:'To page'}/></div><select aria-label="Answer language" value={language} onChange={e=>setLanguage(e.target.value as AskLanguage)}><option value="auto">Auto language</option><option value="zh">中文</option><option value="en">English</option></select><button className="primary-button" disabled={busy||!conversationId||!question.trim()||Boolean(pageRangeError)}>Ask</button></div>{pageRangeError&&<small className="scope-error">{pageRangeError}</small>}</form>
       {error&&<div className="request-error">{error}</div>}
       {drawer&&<aside role="dialog" aria-label={`Evidence ${drawer.evidence_id}`} className="evidence-drawer"><header><strong>{drawer.evidence_id}</strong><button aria-label="Close evidence" onClick={()=>setDrawer(null)}>×</button></header><dl><dt>Section</dt><dd>{drawer.section||'—'}</dd><dt>Pages</dt><dd>{drawer.page_start||'—'}–{drawer.page_end||'—'}</dd></dl><blockquote>{drawer.text}</blockquote>{drawer.section&&<button onClick={()=>onOpenReport(taskId,drawer.section)}>View report section</button>}</aside>}
     </div>
@@ -184,4 +189,19 @@ function sectionNames(task:TaskStatusResponse|undefined):string[]{
   const raw=task?.metadata.paper_sections
   if(!Array.isArray(raw))return []
   return [...new Set(raw.map(item=>typeof item==='string'?item:(item&&typeof item==='object'&&'name' in item?String(item.name):'')).filter(Boolean))]
+}
+
+function taskPageCount(task:TaskStatusResponse|undefined):number{
+  const value=task?.metadata.num_pages
+  return typeof value==='number'&&Number.isInteger(value)&&value>0?value:0
+}
+
+function validatePageRange(startValue:string,endValue:string,totalPages:number):string{
+  if(!startValue&&!endValue)return ''
+  if(!startValue||!endValue)return 'Enter both the first and last page, or clear both.'
+  const start=Number(startValue),end=Number(endValue)
+  if(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end<1)return 'Pages must be positive whole numbers.'
+  if(start>end)return 'The first page cannot be after the last page.'
+  if(totalPages&&end>totalPages)return `This paper has ${totalPages} pages.`
+  return ''
 }

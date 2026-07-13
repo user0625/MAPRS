@@ -134,6 +134,7 @@ class DatabaseTaskStore:
         SQLModel.metadata.create_all(self.engine)
         if self.database_url.startswith("sqlite"):
             self._migrate_columns()
+            self._migrate_ask_columns()
 
     def _migrate_columns(self) -> None:
         if not inspect(self.engine).has_table("api_tasks"):
@@ -165,6 +166,20 @@ class DatabaseTaskStore:
                 if name not in columns:
                     connection.execute(
                         text(f"ALTER TABLE api_tasks ADD COLUMN {name} {definition}")
+                    )
+
+    def _migrate_ask_columns(self) -> None:
+        if not inspect(self.engine).has_table("paper_messages"):
+            return
+        columns = {
+            item["name"]
+            for item in inspect(self.engine).get_columns("paper_messages")
+        }
+        with self.engine.begin() as connection:
+            for name in ("page_start", "page_end"):
+                if name not in columns:
+                    connection.execute(
+                        text(f"ALTER TABLE paper_messages ADD COLUMN {name} INTEGER")
                     )
 
     def create_task(

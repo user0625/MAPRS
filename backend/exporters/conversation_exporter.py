@@ -24,6 +24,8 @@ def _message_json(message: PaperMessage) -> dict[str, Any]:
         else str(message.status),
         "language": message.language,
         "section": message.section,
+        "page_start": message.page_start,
+        "page_end": message.page_end,
         "citation_ids": list(message.citation_ids),
         "error": message.error,
         "retry_of": message.retry_of,
@@ -82,6 +84,12 @@ def _pages(item: MessageEvidence) -> str:
     return f"{item.page_start}–{item.page_end}"
 
 
+def _page_range(page_start: int | None, page_end: int | None) -> str:
+    if page_start is None or page_end is None:
+        return "—"
+    return str(page_start) if page_start == page_end else f"{page_start}–{page_end}"
+
+
 def export_markdown(
     conversation: PaperConversation,
     messages: list[PaperMessage],
@@ -117,6 +125,7 @@ def export_markdown(
                 _metadata("Status", status),
                 _metadata("Language", message.language),
                 _metadata("Section", message.section),
+                _metadata("Pages", _page_range(message.page_start, message.page_end)),
                 _metadata("Citation IDs", citation_ids),
                 _metadata("Created", _iso(message.created_at)),
                 "",

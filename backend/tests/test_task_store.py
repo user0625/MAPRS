@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+from sqlalchemy import create_engine, inspect, text
+
 from backend.api.task_store import APITaskStatus, DatabaseTaskStore
 
 
@@ -26,6 +28,22 @@ def test_store_is_persistent_across_instances(tmp_path):
     first.create_task("persistent", "/tmp/paper.pdf")
     second = make_store(tmp_path)
     assert second.get_task("persistent") is not None
+
+
+def test_sqlite_startup_adds_ask_page_scope_columns(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'legacy.db'}"
+    engine = create_engine(database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text("CREATE TABLE paper_messages (id VARCHAR PRIMARY KEY)")
+        )
+
+    DatabaseTaskStore(database_url).create_tables()
+
+    columns = {
+        column["name"] for column in inspect(engine).get_columns("paper_messages")
+    }
+    assert {"page_start", "page_end"} <= columns
 
 
 def test_list_is_newest_first_and_paginated(tmp_path):

@@ -170,14 +170,38 @@ async def get_conversation_artifact(
     )
 
 
-def validate_section(task, section: str | None):
-    if not section:
+def validate_scope(
+    task,
+    section: str | None,
+    page_start: int | None,
+    page_end: int | None,
+):
+    if not section and page_start is None:
         return
     if not task.state_json_path or not Path(task.state_json_path).is_file():
         raise HTTPException(409, "Paper state is unavailable.")
     state = json.loads(Path(task.state_json_path).read_text(encoding="utf-8"))
-    if section not in sections_from_state(state):
+    if section and section not in sections_from_state(state):
         raise HTTPException(422, "Unknown paper section.")
+    if page_end is None:
+        return
+    document = state.get("document") or {}
+    configured_pages = task.task_metadata.get("num_pages", 0)
+    page_count = configured_pages if isinstance(configured_pages, int) else 0
+    pages = document.get("pages") or []
+    if isinstance(pages, list):
+        page_count = max(page_count, len(pages))
+    chunks = document.get("chunks") or []
+    chunk_ends = [
+        value
+        for chunk in chunks
+        if isinstance(chunk, dict)
+        for value in [chunk.get("page_end") or chunk.get("page_start")]
+        if isinstance(value, int)
+    ]
+    page_count = max([page_count, *chunk_ends])
+    if page_count and page_end > page_count:
+        raise HTTPException(422, f"Page range exceeds the paper's {page_count} pages.")
 
 
 @router.post(
@@ -188,10 +212,15 @@ def validate_section(task, section: str | None):
 async def create_message(conversation_id: str, body: AskMessageCreate):
     conv = conversation_or_404(conversation_id)
     task = completed_task(conv.task_id)
-    validate_section(task, body.section)
+    validate_scope(task, body.section, body.page_start, body.page_end)
     _, ask = stores()
     user, assistant = ask.create_exchange(
-        conv.id, body.content.strip(), body.section, body.language
+        conv.id,
+        body.content.strip(),
+        body.section,
+        body.language,
+        body.page_start,
+        body.page_end,
     )
     from backend.worker.tasks import enqueue_answer
 
@@ -238,7 +267,13 @@ async def retry_message(conversation_id: str, message_id: str):
     if source.status not in (MessageStatus.FAILED, MessageStatus.CANCELED):
         raise HTTPException(409, "Only failed or canceled answers can be retried.")
     _, assistant = ask.create_exchange(
-        conversation_id, "", source.section, source.language, retry_of=source.id
+        conversation_id,
+        "",
+        source.section,
+        source.language,
+        source.page_start,
+        source.page_end,
+        retry_of=source.id,
     )
     from backend.worker.tasks import enqueue_answer
 

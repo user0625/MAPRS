@@ -140,7 +140,7 @@ export async function downloadConversationArtifact(id:string, format:'markdown'|
   link.remove()
   URL.revokeObjectURL(url)
 }
-export function askQuestion(id:string, content:string, section:string|null, language:AskLanguage):Promise<AskAccepted> { return requestJson(`${API_BASE_URL}/api/conversations/${id}/messages`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content,section,language})}) }
+export function askQuestion(id:string, content:string, section:string|null, language:AskLanguage, pageStart:number|null=null, pageEnd:number|null=null):Promise<AskAccepted> { return requestJson(`${API_BASE_URL}/api/conversations/${id}/messages`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content,section,language,page_start:pageStart,page_end:pageEnd})}) }
 export function cancelAnswer(conversationId:string,messageId:string) { return requestJson(`${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/cancel`,{method:'POST'}) }
 export function retryAnswer(conversationId:string,messageId:string):Promise<AskAccepted> { return requestJson(`${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/retry`,{method:'POST'}) }
 export function messageEventsUrl(conversationId:string,messageId:string,after=0) { return `${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/events?after=${after}` }

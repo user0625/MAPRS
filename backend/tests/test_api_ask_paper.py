@@ -54,16 +54,25 @@ def ask_api(tmp_path, monkeypatch):
     queued: list[str] = []
     monkeypatch.setattr("backend.worker.tasks.enqueue_answer", queued.append)
 
-    def completed(task_id: str, sections=("Methods",)):
+    def completed(task_id: str, sections=("Methods",), page_count: int = 0):
         state = tmp_path / f"{task_id}.json"
         state.write_text(json.dumps({
-            "document": {"sections": [{"name": name} for name in sections]},
+            "document": {
+                "sections": [{"name": name} for name in sections],
+                "pages": [{} for _ in range(page_count)],
+            },
             "evidence_bundle": {"items": []},
         }), encoding="utf-8")
         report = tmp_path / f"{task_id}.md"
         report.write_text("# report", encoding="utf-8")
         store.create_task(task_id, str(tmp_path / f"{task_id}.pdf"))
-        store.mark_completed(task_id, str(report), str(state), paper_id=task_id)
+        store.mark_completed(
+            task_id,
+            str(report),
+            str(state),
+            paper_id=task_id,
+            metadata={"num_pages": page_count},
+        )
         return task_id
 
     # Run the application's lifespan work explicitly. Starlette's context-managed
@@ -108,6 +117,39 @@ def test_validation_pagination_and_status_errors(ask_api):
     assert page.json()["total"] == 4
     assert len(page.json()["messages"]) == 2
     assert client.get(f"/api/conversations/{cid}?limit=0").status_code == 422
+
+
+def test_page_range_validation_persistence_and_retry_scope(ask_api):
+    client, _, ask, queued, completed = ask_api
+    completed("task-a", page_count=12)
+    cid = client.post("/api/tasks/task-a/conversations", json={}).json()["id"]
+
+    endpoint = f"/api/conversations/{cid}/messages"
+    assert client.post(endpoint, json={"content": "x", "page_start": 2}).status_code == 422
+    assert client.post(endpoint, json={
+        "content": "x", "page_start": 5, "page_end": 4,
+    }).status_code == 422
+    assert client.post(endpoint, json={
+        "content": "x", "page_start": 1, "page_end": 13,
+    }).status_code == 422
+
+    accepted = client.post(endpoint, json={
+        "content": "Scoped question", "section": "Methods",
+        "page_start": 2, "page_end": 4, "language": "en",
+    })
+    assert accepted.status_code == 202
+    detail = client.get(f"/api/conversations/{cid}").json()
+    assert [(item["page_start"], item["page_end"]) for item in detail["messages"]] == [
+        (2, 4), (2, 4),
+    ]
+
+    answer_id = accepted.json()["assistant_message_id"]
+    ask.mark_canceled(answer_id)
+    retried = client.post(f"/api/conversations/{cid}/messages/{answer_id}/retry")
+    assert retried.status_code == 202
+    retry = ask.get_message(retried.json()["assistant_message_id"])
+    assert retry and (retry.page_start, retry.page_end) == (2, 4)
+    assert queued == [answer_id, retry.id]
 
 
 def test_cancel_failed_retry_and_conflicts(ask_api):
@@ -248,7 +290,9 @@ def test_conversation_markdown_and_json_archives_only_cited_evidence(ask_api):
     client, _, ask, _, completed = ask_api
     completed("task-a")
     conversation = ask.create_conversation("task-a", "研究 notes", "zh")
-    _, answer = ask.create_exchange(conversation.id, "What changed?", "Methods", "en")
+    _, answer = ask.create_exchange(
+        conversation.id, "What changed?", "Methods", "en", 2, 3
+    )
     ask.finish(answer.id, "It improved.", [
         {
             "evidence_id": "ev-used", "task_id": "task-a", "text": "Cited passage",
@@ -275,6 +319,8 @@ def test_conversation_markdown_and_json_archives_only_cited_evidence(ask_api):
         "user", "assistant", "user", "assistant"
     ]
     assert archive["messages"][-1]["status"] == "failed"
+    assert archive["messages"][0]["page_start"] == 2
+    assert archive["messages"][0]["page_end"] == 3
     assert [item["evidence_id"] for item in archive["evidence"]] == ["ev-used"]
     assert archive["evidence"][0]["message_id"] == answer.id
     assert archive["evidence"][0]["score"] == 0.875
@@ -286,6 +332,7 @@ def test_conversation_markdown_and_json_archives_only_cited_evidence(ask_api):
     assert "**Task ID:** `task-a`" in markdown.text
     assert "**Status:** `failed`" in markdown.text
     assert "**Citation IDs:** `ev-used`" in markdown.text
+    assert "**Pages:** `2–3`" in markdown.text
     assert "### ev-used" in markdown.text and "Cited passage" in markdown.text
     assert "ev-unused" not in markdown.text and "Candidate only" not in markdown.text
 

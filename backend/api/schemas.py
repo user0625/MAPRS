@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from datetime import datetime
 from typing import Any, Literal
@@ -123,7 +123,7 @@ class StructuredReportResponse(BaseModel):
 
 class EvidenceResponse(EvidenceIndexItemResponse):
     task_id: str
-    text: str = Field(max_length=2000)
+    text: str = Field(max_length=4000)
 
 
 class WorkflowStepSummary(BaseModel):
@@ -184,6 +184,8 @@ class AskMessageResponse(BaseModel):
     status: str
     language: str
     section: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
     citation_ids: list[str] = Field(default_factory=list)
     error: str | None = None
     retry_of: str | None = None
@@ -201,7 +203,21 @@ class ConversationDetailResponse(ConversationResponse):
 class AskMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=8000)
     section: str | None = Field(default=None, max_length=300)
+    page_start: int | None = Field(default=None, ge=1, le=100000)
+    page_end: int | None = Field(default=None, ge=1, le=100000)
     language: Literal["auto", "zh", "en"] = "auto"
+
+    @model_validator(mode="after")
+    def validate_page_range(self):
+        if (self.page_start is None) != (self.page_end is None):
+            raise ValueError("page_start and page_end must be provided together")
+        if (
+            self.page_start is not None
+            and self.page_end is not None
+            and self.page_start > self.page_end
+        ):
+            raise ValueError("page_start must not exceed page_end")
+        return self
 
 
 class AskAcceptedResponse(BaseModel):

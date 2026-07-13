@@ -6,9 +6,9 @@ const task = {
   completed_at: now, paper_title: 'Reliable Paper', paper_id: 'paper-1', report_path: '/report.md',
   state_json_path: '/state.json', error_message: null, progress: 100, current_step: 'export',
   attempt_count: 1, last_checkpoint_step: 'export', last_event_id: 1,
-  metadata: { paper_sections: ['Methods', 'Results'] },
+  metadata: { paper_sections: ['Methods', 'Results'], num_pages: 12 },
 }
-const baseMessage = { conversation_id: 'conv-1', language: 'en', section: 'Methods', citation_ids: [], error: null, retry_of: null, created_at: now, updated_at: now }
+const baseMessage = { conversation_id: 'conv-1', language: 'en', section: 'Methods', page_start: null, page_end: null, citation_ids: [], error: null, retry_of: null, created_at: now, updated_at: now }
 
 async function installFixtures(page: Page) {
   let title = 'Methods discussion'
@@ -55,9 +55,10 @@ async function installFixtures(page: Page) {
       })
     }
     if (path === '/api/conversations/conv-1/messages' && request.method() === 'POST') {
+      const body = request.postDataJSON()
       messages = [...messages,
-        { ...baseMessage, id: 'user-new', role: 'user', content: request.postDataJSON().content, status: 'completed' },
-        { ...baseMessage, id: 'answer-new', role: 'assistant', content: '', status: 'generating' },
+        { ...baseMessage, id: 'user-new', role: 'user', content: body.content, status: 'completed', page_start: body.page_start, page_end: body.page_end },
+        { ...baseMessage, id: 'answer-new', role: 'assistant', content: '', status: 'generating', page_start: body.page_start, page_end: body.page_end },
       ]
       return json({ user_message_id: 'user-new', assistant_message_id: 'answer-new', status: 'generating' }, 202)
     }
@@ -102,12 +103,15 @@ test('complete grounded question flow survives refresh and opens report', async 
 
   await page.getByLabel('Question').fill('What is the finding?')
   await page.getByLabel('Paper section').selectOption('Methods')
+  await page.getByLabel('From page').fill('2')
+  await page.getByLabel('To page').fill('3')
   await page.getByLabel('Answer language').selectOption('en')
   await page.getByRole('button', { name: 'Ask', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Markdown' })).toBeDisabled()
   await expect(page.getByRole('button', { name: 'JSON', exact: true })).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Delete' })).toBeDisabled()
   await expect(page.getByText('Alpha answer')).toBeVisible()
+  await expect(page.getByText('Methods · Pages 2–3').last()).toBeVisible()
   await expect(page.getByText('duplicate')).toHaveCount(0)
   await page.getByRole('button', { name: 'Evidence ev:1' }).last().click()
   await expect(page.getByRole('dialog', { name: 'Evidence ev:1' })).toContainText('Grounding passage')

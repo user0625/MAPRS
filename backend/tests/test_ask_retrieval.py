@@ -7,7 +7,14 @@ import numpy as np
 
 from backend.api.ask_store import AskStore
 from backend.api.task_store import DatabaseTaskStore
-from backend.ask_paper import fallback_query, rewrite_question, sanitize_citations
+from backend.ask_paper import (
+    estimate_tokens,
+    fallback_query,
+    fit_evidence_context,
+    rewrite_question,
+    sanitize_citations,
+    select_history_context,
+)
 from backend.ask_retrieval import (
     AskPaperRetrievalService,
     RetrievalCache,
@@ -106,6 +113,32 @@ def test_bm25_section_filter_and_no_answer(tmp_path):
     assert [chunk["chunk_id"] for _, chunk in result.hits] == ["methods"]
     assert service.retrieve("task", str(state), "unfindable phrase", "Methods").hits == []
     assert result.diagnostics.vector_enabled is False
+
+
+def test_retrieval_combines_section_and_overlapping_page_range(tmp_path):
+    state = tmp_path / "state.json"
+    write_state(state, [
+        {
+            "chunk_id": "before", "section": "Methods", "text": "target before",
+            "page_start": 1, "page_end": 1,
+        },
+        {
+            "chunk_id": "overlap", "section": "Methods", "text": "target overlap",
+            "page_start": 2, "page_end": 3,
+        },
+        {
+            "chunk_id": "wrong-section", "section": "Results", "text": "target result",
+            "page_start": 2, "page_end": 2,
+        },
+        {"chunk_id": "unknown-page", "section": "Methods", "text": "target unknown"},
+    ])
+    service = AskPaperRetrievalService(settings())
+
+    result = service.retrieve("task", str(state), "target", "Methods", 3, 3)
+
+    assert [chunk["chunk_id"] for _, chunk in result.hits] == ["overlap"]
+    service.retrieve("task", str(state), "target", "Methods", 1, 1)
+    assert len(service.cache.data) == 2
 
 
 def test_vector_candidates_and_rrf_add_semantic_synonym(tmp_path):
@@ -234,10 +267,11 @@ def test_default_retrieval_service_reuses_worker_cache():
     assert get_retrieval_service(configured) is get_retrieval_service(configured)
 
 
-def test_rewrite_uses_six_messages_and_falls_back_deterministically():
+def test_rewrite_uses_supplied_bounded_history_and_falls_back_deterministically():
     recent = [SimpleNamespace(role="user" if i % 2 == 0 else "assistant", content=f"m{i}") for i in range(8)]
+    bounded = select_history_context(recent, max_messages=6, token_budget=100)
     client = RewriteClient("What method does the paper use?")
-    rewritten, reason = rewrite_question(client, recent, "How does it work?", 160)
+    rewritten, reason = rewrite_question(client, bounded, "How does it work?", 160)
     assert rewritten == "What method does the paper use?"
     assert reason is None
     assert client.calls[0][1] == 160
@@ -245,9 +279,32 @@ def test_rewrite_uses_six_messages_and_falls_back_deterministically():
     assert "m2" in client.calls[0][0][1].content
 
     broken = RewriteClient(error=TimeoutError())
-    rewritten, reason = rewrite_question(broken, recent, "How does it work?", 160)
-    assert rewritten == fallback_query(recent, "How does it work?") == "m6 How does it work?"
+    rewritten, reason = rewrite_question(broken, bounded, "How does it work?", 160)
+    assert rewritten == fallback_query(bounded, "How does it work?") == "m6 How does it work?"
     assert reason == "rewrite_unavailable:TimeoutError"
+
+
+def test_context_budgets_keep_recent_terminal_history_and_trim_evidence():
+    messages = [
+        SimpleNamespace(role="user", content="old question", status="completed"),
+        SimpleNamespace(role="assistant", content="old answer", status="completed"),
+        SimpleNamespace(role="assistant", content="failed answer", status="failed"),
+        SimpleNamespace(role="user", content="latest " + "detail " * 100, status="completed"),
+    ]
+
+    history = select_history_context(messages, max_messages=3, token_budget=30)
+
+    assert len(history) == 1
+    assert history[0].role == "user" and history[0].content.endswith("…")
+    assert estimate_tokens(f"<user>{history[0].content}</user>") <= 30
+
+    fitted = fit_evidence_context([
+        (0.9, {"chunk_id": "first", "text": "alpha " * 200}),
+        (0.8, {"chunk_id": "second", "text": "beta " * 200}),
+    ], token_budget=60)
+    assert [chunk["chunk_id"] for _, chunk in fitted] == ["first"]
+    assert fitted[0][1]["text"].endswith("…")
+    assert estimate_tokens(fitted[0][1]["text"]) + 16 <= 60
 
 
 def test_citation_whitelist_removes_cross_message_ids():

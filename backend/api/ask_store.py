@@ -37,6 +37,8 @@ class PaperMessage(SQLModel, table=True):
     status: MessageStatus = Field(default=MessageStatus.COMPLETED, index=True)
     language: str = "auto"
     section: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
     citation_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON_TYPE))
     error: str | None = None
     retry_of: str | None = None
@@ -184,6 +186,8 @@ class AskStore:
         question: str,
         section: str | None,
         language: str,
+        page_start: int | None = None,
+        page_end: int | None = None,
         retry_of: str | None = None,
     ) -> tuple[PaperMessage | None, PaperMessage]:
         now = utcnow()
@@ -197,6 +201,8 @@ class AskStore:
                 content=question,
                 language=language,
                 section=section,
+                page_start=page_start,
+                page_end=page_end,
                 created_at=now,
                 updated_at=now,
             )
@@ -208,6 +214,8 @@ class AskStore:
             status=MessageStatus.GENERATING,
             language=language,
             section=section,
+            page_start=page_start,
+            page_end=page_end,
             retry_of=retry_of,
             created_at=now,
             updated_at=now,

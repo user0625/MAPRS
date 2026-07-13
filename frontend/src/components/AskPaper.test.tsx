@@ -29,7 +29,7 @@ const task = {
   updated_at: now, completed_at: now, paper_title: 'Paper', paper_id: 'paper-1',
   report_path: '/report.md', state_json_path: '/state.json', error_message: null,
   progress: 100, current_step: null, attempt_count: 1, last_checkpoint_step: null,
-  last_event_id: 1, metadata: {},
+  last_event_id: 1, metadata: { num_pages: 12, paper_sections: ['Methods'] },
 }
 const conversations = [
   { id: 'conv-1', task_id: 'task-1', title: 'Methods chat', language: 'en' as const, created_at: now, updated_at: now },
@@ -47,6 +47,7 @@ describe('AskPaper conversation management', () => {
     mocks.listTasks.mockResolvedValue({ items: [task], total: 1, limit: 100, offset: 0 })
     mocks.listConversations.mockResolvedValue({ items: conversations })
     mocks.getConversation.mockImplementation(async (id:string) => detail(id))
+    mocks.askQuestion.mockResolvedValue({ user_message_id: 'user-1', assistant_message_id: 'answer-1', status: 'generating' })
     mocks.deleteConversation.mockResolvedValue(undefined)
     mocks.downloadConversationArtifact.mockResolvedValue(undefined)
   })
@@ -92,5 +93,25 @@ describe('AskPaper conversation management', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Markdown' })).toBeDisabled())
     expect(screen.getByRole('button', { name: 'JSON' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled()
+  })
+
+  it('validates and submits an optional page range', async () => {
+    render(<AskPaper initialTaskId="task-1" onOpenReport={vi.fn()} />)
+    await screen.findByRole('heading', { name: 'Methods chat' })
+
+    fireEvent.change(screen.getByLabelText('Question'), { target: { value: 'Compare results' } })
+    fireEvent.change(screen.getByLabelText('From page'), { target: { value: '5' } })
+    expect(screen.getByText('Enter both the first and last page, or clear both.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Ask' })).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('To page'), { target: { value: '3' } })
+    expect(screen.getByText('The first page cannot be after the last page.')).toBeVisible()
+    fireEvent.change(screen.getByLabelText('To page'), { target: { value: '8' } })
+    fireEvent.change(screen.getByLabelText('Paper section'), { target: { value: 'Methods' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }))
+
+    await waitFor(() => expect(mocks.askQuestion).toHaveBeenCalledWith(
+      'conv-1', 'Compare results', 'Methods', 'auto', 5, 8,
+    ))
   })
 })
