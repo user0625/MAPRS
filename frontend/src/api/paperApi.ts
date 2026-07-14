@@ -10,6 +10,7 @@ import type {
   StructuredReportResponse,
   Conversation, ConversationDetail, AskAccepted, AskLanguage,
   ComparisonResponse, ComparisonListResponse, ComparisonStructuredReport, ComparisonEvidence,
+  DocumentSearchRequest, DocumentSearchResponse,
 } from '../types/api'
 
 const DEFAULT_API_BASE_URL = ''
@@ -145,6 +146,12 @@ export function askQuestion(id:string, content:string, section:string|null, lang
 export function cancelAnswer(conversationId:string,messageId:string) { return requestJson(`${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/cancel`,{method:'POST'}) }
 export function retryAnswer(conversationId:string,messageId:string):Promise<AskAccepted> { return requestJson(`${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/retry`,{method:'POST'}) }
 export function messageEventsUrl(conversationId:string,messageId:string,after=0) { return `${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/events?after=${after}` }
+
+export function searchDocument(taskId:string, request:DocumentSearchRequest):Promise<DocumentSearchResponse> {
+  return requestJson(`${API_BASE_URL}/api/tasks/${taskId}/search`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(request),
+  })
+}
 
 export function createComparison(taskIds:string[], title:string, focus:string, language:OutputLanguage):Promise<ComparisonResponse> {
   return requestJson(`${API_BASE_URL}/api/comparisons`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_ids:taskIds,title:title.trim()||null,focus,language})})

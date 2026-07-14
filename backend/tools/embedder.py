@@ -184,6 +184,7 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
     self.batch_size = batch_size
     self.client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0, timeout=timeout)
     self.request_policy = request_policy
+    self.request_count = 0
   
   def embed_text(self, text:str) -> list[float]:
     vectors = self.embed_texts([text])
@@ -202,6 +203,7 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
 
       try:
         def operation():
+          self.request_count += 1
           return self.client.embeddings.create(model=self.model_name, input=batch)
         response = self.request_policy.call(operation) if self.request_policy else operation()
       except RequestPolicyError as exc:

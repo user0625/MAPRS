@@ -15,6 +15,7 @@ import {
 } from '../api/paperApi'
 import type { AskLanguage, AskMessage, Conversation, EvidenceItem, TaskStatusResponse } from '../types/api'
 import { useMessageStream } from '../hooks/useMessageStream'
+import type { AskHandoff } from './SearchDocument'
 
 type ConversationAction = '' | 'delete' | 'markdown' | 'json'
 
@@ -22,7 +23,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function AskPaper({ initialTaskId, onOpenReport }:{initialTaskId?:string|null;onOpenReport:(taskId:string,section?:string|null)=>void}) {
+export function AskPaper({ initialTaskId, handoff, onOpenReport }:{initialTaskId?:string|null;handoff?:AskHandoff|null;onOpenReport:(taskId:string,section?:string|null)=>void}) {
   const [tasks,setTasks]=useState<TaskStatusResponse[]>([]), [taskId,setTaskId]=useState(initialTaskId||'')
   const [conversations,setConversations]=useState<Conversation[]>([]), [conversationId,setConversationId]=useState('')
   const [conversationSearch,setConversationSearch]=useState('')
@@ -44,6 +45,13 @@ export function AskPaper({ initialTaskId, onOpenReport }:{initialTaskId?:string|
   },[initialTaskId])
 
   useEffect(()=>{if(initialTaskId)setTaskId(initialTaskId)},[initialTaskId])
+
+  useEffect(()=>{
+    if(!handoff)return
+    setTaskId(handoff.taskId)
+    setQuestion(handoff.query)
+    setSection('');setPageStart('');setPageEnd('');setDrawer(null);setError('')
+  },[handoff])
 
   useEffect(()=>{
     let active=true

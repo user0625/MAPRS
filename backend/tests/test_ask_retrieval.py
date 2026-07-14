@@ -138,7 +138,7 @@ def test_retrieval_combines_section_and_overlapping_page_range(tmp_path):
 
     assert [chunk["chunk_id"] for _, chunk in result.hits] == ["overlap"]
     service.retrieve("task", str(state), "target", "Methods", 1, 1)
-    assert len(service.cache.data) == 2
+    assert len(service.cache.data) == 1
 
 
 def test_vector_candidates_and_rrf_add_semantic_synonym(tmp_path):
@@ -247,14 +247,14 @@ def test_embedding_query_failure_is_explicit_bm25_degradation(tmp_path):
     assert result.diagnostics.vector_candidates_raw == 0
 
 
-def test_cache_key_version_provider_section_and_lru_capacity(tmp_path):
+def test_cache_key_version_provider_scope_slicing_and_lru_capacity(tmp_path):
     cache = RetrievalCache(maxsize=2)
     service = AskPaperRetrievalService(settings(), cache=cache)
     state = tmp_path / "state.json"
     write_state(state, [{"chunk_id": "c1", "section": "A", "text": "alpha"}])
     service.retrieve("one", str(state), "alpha", "A")
     service.retrieve("one", str(state), "alpha", None)
-    assert len(cache.data) == 2
+    assert len(cache.data) == 1
     time.sleep(0.001)
     write_state(state, [{"chunk_id": "c2", "section": "A", "text": "alpha beta"}])
     service.retrieve("one", str(state), "beta", "A")

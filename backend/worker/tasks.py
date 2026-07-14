@@ -10,6 +10,7 @@ from backend.core.state import AnalysisState, AnalysisStatus
 from backend.exporters.report_exporter import ReportExporter
 from backend.schemas.paper import PaperInput
 from backend.worker.celery_app import celery_app
+from backend.ask_retrieval import prebuild_retrieval_index
 
 logger = logging.getLogger(__name__)
 PROGRESS = {
@@ -90,6 +91,9 @@ def execute_analysis(task_id: str, resume: bool = False) -> None:
         report_json_path = report_dir / f"{task_id}_report.json"
         state_path = log_dir / f"{task_id}_state.json"
         ReportExporter().save_all(state, report_path, report_json_path, state_path)
+        index_metadata = prebuild_retrieval_index(task_id, state_path, settings)
+        state.metadata["ask_retrieval_index"] = index_metadata
+        ReportExporter().save_state_json(state, state_path)
         document = state.document
         store.mark_completed(
             task_id,
@@ -107,6 +111,7 @@ def execute_analysis(task_id: str, resume: bool = False) -> None:
                 "num_report_sections": len(state.final_report.sections),
                 "quality_evaluation": state.metadata.get("quality_evaluation", {}),
                 "artifact_formats": ["markdown", "json", "html", "pdf", "docx"],
+                "ask_retrieval_index": index_metadata,
             },
         )
     except Exception as exc:

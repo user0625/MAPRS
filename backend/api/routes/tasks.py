@@ -35,6 +35,8 @@ from backend.api.uploads import (
     deduplication_key,
     save_validated_pdf,
 )
+from backend.ask_retrieval import prebuild_retrieval_index
+from backend.api.task_state import load_task_state
 
 router = APIRouter(
     prefix="/api/tasks",
@@ -412,16 +414,12 @@ def _completed_state(task_id: str) -> tuple[object, dict]:
         raise HTTPException(status_code=404, detail="Task not found.")
     if record.status != APITaskStatus.COMPLETED:
         raise HTTPException(status_code=409, detail="Task is not completed.")
-    if not record.state_json_path or not Path(record.state_json_path).is_file():
-        raise HTTPException(
-            status_code=404, detail="Structured analysis state is unavailable."
-        )
-    try:
-        state = json.loads(Path(record.state_json_path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise HTTPException(
-            status_code=500, detail="Structured analysis state is invalid."
-        ) from exc
+    state = load_task_state(
+        record,
+        unavailable_status=404,
+        unavailable_detail="Structured analysis state is unavailable.",
+        invalid_detail="Structured analysis state is invalid.",
+    )
     return record, state
 
 
@@ -688,6 +686,9 @@ def run_analysis_task(
             report_json_path=report_json_path,
             state_json_path=state_json_path,
         )
+        index_metadata = prebuild_retrieval_index(task_id, state_json_path, settings)
+        state.metadata["ask_retrieval_index"] = index_metadata
+        exporter.save_state_json(state, state_json_path)
 
         document = state.document
         evidence_bundle = state.evidence_bundle
@@ -712,6 +713,7 @@ def run_analysis_task(
                 "report_configuration": state.metadata.get("report_configuration", {}),
                 "quality_evaluation": state.metadata.get("quality_evaluation", {}),
                 "artifact_formats": ["markdown", "json", "html", "pdf", "docx"],
+                "ask_retrieval_index": index_metadata,
             },
         )
 

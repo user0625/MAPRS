@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from datetime import datetime
 from typing import Any, Literal
@@ -225,6 +225,78 @@ class AskAcceptedResponse(BaseModel):
     user_message_id: str | None
     assistant_message_id: str
     status: str
+
+
+class DocumentSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=8000)
+    mode: Literal["auto", "bm25"] = "auto"
+    section: str | None = Field(default=None, max_length=300)
+    page_start: int | None = Field(default=None, ge=1, le=100000)
+    page_end: int | None = Field(default=None, ge=1, le=100000)
+    top_k: int = Field(default=6, ge=1, le=20)
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def strip_query(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("query must not be empty")
+        return value
+
+    @model_validator(mode="after")
+    def validate_page_range(self):
+        if (self.page_start is None) != (self.page_end is None):
+            raise ValueError("page_start and page_end must be provided together")
+        if (
+            self.page_start is not None
+            and self.page_end is not None
+            and self.page_start > self.page_end
+        ):
+            raise ValueError("page_start must not exceed page_end")
+        return self
+
+
+class DocumentSearchContext(BaseModel):
+    relation: Literal["before", "after"]
+    chunk_id: str
+    text: str = Field(max_length=600)
+    section: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+
+
+class DocumentSearchHit(BaseModel):
+    rank: int
+    chunk_id: str
+    text: str = Field(max_length=1200)
+    section: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    sources: list[Literal["bm25", "vector"]] = Field(default_factory=list)
+    bm25_score: float | None = None
+    vector_score: float | None = None
+    hybrid_score: float | None = None
+    context: list[DocumentSearchContext] = Field(default_factory=list)
+
+
+class DocumentSearchDiagnostics(BaseModel):
+    actual_mode: Literal["hybrid", "bm25", "degraded_to_bm25"]
+    candidate_count: int = Field(ge=0)
+    elapsed_ms: float = Field(ge=0)
+    index_source: Literal["memory_hit", "disk_hit", "cold_build", "unavailable"]
+    fallback_reason: Literal[
+        "index_build_unavailable", "query_embedding_unavailable"
+    ] | None = None
+
+
+class DocumentSearchResponse(BaseModel):
+    task_id: str
+    query: str
+    mode_used: Literal["hybrid", "bm25", "degraded_to_bm25"]
+    hits: list[DocumentSearchHit] = Field(default_factory=list)
+    diagnostics: DocumentSearchDiagnostics
 
 
 class ComparisonCreate(BaseModel):

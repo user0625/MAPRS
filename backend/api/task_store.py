@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from enum import Enum
+import logging
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import JSON, Column, UniqueConstraint, inspect, text, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Session, SQLModel, create_engine, func, select
+
+
+logger = logging.getLogger(__name__)
 
 
 def utcnow() -> datetime:
@@ -573,6 +577,13 @@ class DatabaseTaskStore:
                 if raw == record.report_path:
                     for suffix in (".json", ".html", ".pdf", ".docx"):
                         path.with_suffix(suffix).unlink(missing_ok=True)
+        try:
+            from backend.core.config import get_settings
+            from backend.retrieval_index import delete_index
+
+            delete_index(get_settings(), task_id)
+        except Exception as exc:
+            logger.warning("Failed to delete retrieval index category=%s", type(exc).__name__)
         self.add_event(task_id, "deleted", record.status, message=reason)
         self.audit(task_id, "deleted", "anonymous", {"reason": reason})
         self._update(
@@ -605,6 +616,15 @@ class DatabaseTaskStore:
                 ):
                     if raw and Path(raw).name.startswith(("task_", "api_")):
                         Path(raw).unlink(missing_ok=True)
+                try:
+                    from backend.core.config import get_settings
+                    from backend.retrieval_index import delete_index
+
+                    delete_index(get_settings(), record.task_id)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to clean retrieval index category=%s", type(exc).__name__
+                    )
                 record.cleaned_at = utcnow()
                 record.updated_at = utcnow()
                 record.task_metadata = {**record.task_metadata, "files_cleaned": True}

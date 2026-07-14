@@ -9,6 +9,7 @@ from typing import Any
 
 from backend.api.ask_store import AskStore
 from backend.api.task_store import APITaskStatus, DatabaseTaskStore
+from backend.api.task_state import sections_from_state
 from backend.ask_retrieval import AskPaperRetrievalService, get_retrieval_service, terms
 from backend.core.config import AppSettings, get_settings
 from backend.llm.client import BaseLLMClient, LLMMessage, create_llm_client
@@ -113,13 +114,6 @@ def render_history(messages: list[ContextMessage]) -> str:
 
 def detect_language(text: str) -> str:
     return "zh" if len(re.findall(r"[\u3400-\u9fff]", text)) >= max(1, len(text) // 20) else "en"
-
-
-def sections_from_state(state: dict[str, Any]) -> list[str]:
-    document = state.get("document") or {}
-    names = [s.get("name") for s in document.get("sections", []) if isinstance(s, dict)]
-    names += [c.get("section") for c in document.get("chunks", []) if isinstance(c, dict)]
-    return list(dict.fromkeys(str(x) for x in names if x))
 
 
 def fallback_query(recent: list[Any], question: str) -> str:

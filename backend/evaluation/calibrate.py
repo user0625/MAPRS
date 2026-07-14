@@ -62,6 +62,13 @@ class RawCase:
     vector_candidates_filtered: int
     vector_candidates_removed: int
     rrf_candidates: int
+    index_build_ms: float = 0.0
+    index_load_ms: float = 0.0
+    index_cache_hit: bool = False
+    index_memory_cache_hit: bool = False
+    index_cold_build_failed: bool = False
+    bm25_score_rows: list[dict[str, Any]] | None = None
+    vector_score_rows: list[dict[str, Any]] | None = None
 
 
 ServiceFactory = Callable[[AppSettings], AskPaperRetrievalService]
@@ -83,6 +90,8 @@ def config_signature(manifest: DatasetManifest, settings: AppSettings) -> dict[s
         "chunking_config": manifest.chunking_config,
         "candidate_count": settings.ask_candidate_count,
         "evidence_count": settings.ask_evidence_count,
+        "bm25_k1": settings.ask_bm25_k1,
+        "bm25_b": settings.ask_bm25_b,
         "rrf_k": settings.ask_rrf_k,
     }
 
@@ -164,7 +173,11 @@ def _collect_raw(
         result = service.retrieve(
             paper.paper_id, str(_state_path(directory, paper)), case.question, case.section,
         )
-        latency_ms = (time.perf_counter() - started) * 1000
+        wall_latency_ms = (time.perf_counter() - started) * 1000
+        index_build_ms = getattr(result.diagnostics, "index_build_ms", 0.0)
+        # Cold construction is reported separately and is never hidden inside
+        # the query-latency quality gate.
+        latency_ms = max(0.0, wall_latency_ms - index_build_ms)
         candidate_ids = [str(item["chunk_id"]) for item in result.diagnostics.candidate_scores]
         # State metadata is needed only in memory to check chapter boundaries.
         state = json.loads(_state_path(directory, paper).read_text(encoding="utf-8"))
@@ -189,6 +202,17 @@ def _collect_raw(
             vector_candidates_filtered=result.diagnostics.vector_candidates_filtered,
             vector_candidates_removed=result.diagnostics.vector_candidates_removed,
             rrf_candidates=result.diagnostics.rrf_candidates,
+            index_build_ms=index_build_ms,
+            index_load_ms=getattr(result.diagnostics, "index_load_ms", 0.0),
+            index_cache_hit=getattr(result.diagnostics, "index_cache_hit", False),
+            index_memory_cache_hit=getattr(
+                result.diagnostics, "index_memory_cache_hit", False
+            ),
+            index_cold_build_failed=getattr(
+                result.diagnostics, "index_cold_build_failed", False
+            ),
+            bm25_score_rows=getattr(result.diagnostics, "bm25_scores_raw", None),
+            vector_score_rows=getattr(result.diagnostics, "vector_scores_raw", None),
         ))
     return rows
 
@@ -276,6 +300,19 @@ def _report(
         },
         "metrics": metrics,
         "degraded_reasons": sorted({row.degraded_reason for row in rows if row.degraded_reason}),
+        "retrieval_index": {
+            "build_ms": round(sum(row.index_build_ms for row in rows), 3),
+            "load_ms": round(sum(row.index_load_ms for row in rows), 3),
+            "persistent_cache_hit_rate": (
+                sum(row.index_cache_hit for row in rows) / len(rows) if rows else 0.0
+            ),
+            "memory_cache_hit_rate": (
+                sum(row.index_memory_cache_hit for row in rows) / len(rows) if rows else 0.0
+            ),
+            "cold_build_failure_rate": (
+                sum(row.index_cold_build_failed for row in rows) / len(rows) if rows else 0.0
+            ),
+        },
         "cases": [asdict(item) for item in observations],
     }
 

@@ -114,4 +114,12 @@ describe('AskPaper conversation management', () => {
       'conv-1', 'Compare results', 'Methods', 'auto', 5, 8,
     ))
   })
+
+  it('applies a nonce handoff by selecting the paper and prefilling without sending', async () => {
+    const { rerender } = render(<AskPaper initialTaskId="task-1" onOpenReport={vi.fn()} />)
+    await screen.findByRole('heading', { name: 'Methods chat' })
+    rerender(<AskPaper initialTaskId="task-1" handoff={{ taskId: 'task-1', query: 'Prefilled search', nonce: 1 }} onOpenReport={vi.fn()} />)
+    expect(screen.getByLabelText('Question')).toHaveValue('Prefilled search')
+    expect(mocks.askQuestion).not.toHaveBeenCalled()
+  })
 })

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import re
 import unicodedata
+import time
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +19,13 @@ from backend.core.config import AppSettings
 from backend.core.request_policy import RequestPolicy
 from backend.tools.embedder import BaseEmbedder, OpenAICompatibleEmbedder
 from backend.reranker import BaseReranker, OpenAICompatibleReranker
+from backend.retrieval_index import (
+    INDEX_SCHEMA,
+    chunks_sha256,
+    load_vectors,
+    save_vectors,
+    state_content_sha256,
+)
 
 logger = logging.getLogger(__name__)
 TOKEN = re.compile(r"[A-Za-z0-9_]+|[\u3400-\u9fff]+", re.UNICODE)
@@ -58,6 +67,13 @@ class RetrievalIndex:
     document_frequency: Counter[str]
     vectors: np.ndarray | None = None
     degraded_reason: str | None = None
+    state_sha256: str | None = None
+    chunks_sha256: str | None = None
+    index_build_ms: float = 0.0
+    index_load_ms: float = 0.0
+    persistent_cache_hit: bool = False
+    cold_build_failed: bool = False
+    cache_digest: str | None = None
 
 
 @dataclass
@@ -77,6 +93,8 @@ class RetrievalDiagnostics:
     vector_min_similarity: float | None = None
     final_scores: list[float] = field(default_factory=list)
     candidate_scores: list[dict[str, Any]] = field(default_factory=list)
+    bm25_scores_raw: list[dict[str, Any]] = field(default_factory=list)
+    vector_scores_raw: list[dict[str, Any]] = field(default_factory=list)
     reranker_mode: str = "disabled"
     reranker_latency_ms: float | None = None
     reranker_top_score: float | None = None
@@ -86,6 +104,13 @@ class RetrievalDiagnostics:
     evidence_threshold: float | None = None
     answerability_threshold: float | None = None
     calibration_version: str = "uncalibrated"
+    index_schema: str = INDEX_SCHEMA
+    index_build_ms: float = 0.0
+    index_load_ms: float = 0.0
+    index_cache_hit: bool = False
+    index_memory_cache_hit: bool = False
+    index_cold_build_failed: bool = False
+    index_cache_digest: str | None = None
 
 
 @dataclass
@@ -138,6 +163,7 @@ class AskPaperRetrievalService:
                 self.settings.ask_reranker_api_key,
                 self.settings.ask_reranker_model,
                 self.settings.ask_reranker_base_url,
+                request_policy=RequestPolicy.from_settings(self.settings),
             )
         return self.reranker
 
@@ -166,16 +192,13 @@ class AskPaperRetrievalService:
         self,
         task_id: str,
         path: Path,
-        section: str | None,
-        page_start: int | None,
-        page_end: int | None,
+        state_sha256: str,
     ) -> tuple[Any, ...]:
         return (
             task_id,
             path.stat().st_mtime_ns,
-            section or "*",
-            page_start or "*",
-            page_end or "*",
+            state_sha256,
+            INDEX_SCHEMA,
             self.settings.embedding_provider,
             self.settings.embedding_model,
         )
@@ -184,33 +207,87 @@ class AskPaperRetrievalService:
         self,
         task_id: str,
         path: Path,
-        section: str | None,
-        page_start: int | None,
-        page_end: int | None,
+        state_sha256: str,
         chunks: list[dict[str, Any]],
-    ) -> tuple[RetrievalIndex, str | None]:
-        key = self._cache_key(task_id, path, section, page_start, page_end)
+    ) -> tuple[RetrievalIndex, str | None, bool]:
+        key = self._cache_key(task_id, path, state_sha256)
         cached = self.cache.get(key)
         if cached is not None:
-            return cached, cached.degraded_reason
+            return cached, cached.degraded_reason, True
         index = self._build_lexical(chunks)
+        index.state_sha256 = state_sha256
+        index.chunks_sha256 = chunks_sha256(chunks)
         degraded = None
         if not self.settings.use_mock_embedding and chunks:
+            chunk_ids = [str(chunk.get("chunk_id") or "") for chunk in chunks]
             try:
-                vectors = self._embedder().embed_texts([str(c.get("text", "")) for c in chunks])
-                matrix = np.asarray(vectors, dtype=np.float32)
-                norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-                norms[norms == 0] = 1
-                index.vectors = matrix / norms
+                embedder = self._embedder()
+                persisted = load_vectors(
+                    self.settings,
+                    task_id,
+                    state_sha256=state_sha256,
+                    chunk_sha256=index.chunks_sha256,
+                    chunk_ids=chunk_ids,
+                    embedding_model=embedder.model_name,
+                )
+                if persisted is not None:
+                    index.vectors = persisted.vectors
+                    index.index_load_ms = persisted.load_ms
+                    index.persistent_cache_hit = True
+                    index.cache_digest = persisted.cache_digest[:16]
+                else:
+                    started = time.perf_counter()
+                    vectors = embedder.embed_texts([str(c.get("text", "")) for c in chunks])
+                    matrix = np.asarray(vectors, dtype=np.float32)
+                    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+                    if not np.isfinite(matrix).all():
+                        raise ValueError("embedding vectors must be finite")
+                    norms[norms == 0] = 1
+                    index.vectors = matrix / norms
+                    index.index_build_ms = (time.perf_counter() - started) * 1000
+                    metadata = save_vectors(
+                        self.settings,
+                        task_id,
+                        state_sha256=state_sha256,
+                        chunk_sha256=index.chunks_sha256,
+                        chunk_ids=chunk_ids,
+                        vectors=index.vectors,
+                        embedding_model=embedder.model_name,
+                    )
+                    index.cache_digest = str(metadata["cache_digest"])
             except Exception as exc:
                 degraded = f"embedding_unavailable:{type(exc).__name__}"
                 index.degraded_reason = degraded
+                index.cold_build_failed = True
                 logger.warning("Ask Paper vector index degraded: %s", type(exc).__name__)
         self.cache.put(key, index)
-        return index, degraded
+        return index, degraded, False
 
     @staticmethod
-    def bm25(index: RetrievalIndex, query: str, limit: int) -> list[tuple[int, float]]:
+    def _slice(index: RetrievalIndex, positions: list[int]) -> RetrievalIndex:
+        vectors = index.vectors[positions] if index.vectors is not None else None
+        sliced = AskPaperRetrievalService._build_lexical([index.chunks[position] for position in positions])
+        sliced.vectors = vectors
+        sliced.degraded_reason = index.degraded_reason
+        sliced.state_sha256 = index.state_sha256
+        sliced.chunks_sha256 = index.chunks_sha256
+        sliced.index_build_ms = index.index_build_ms
+        sliced.index_load_ms = index.index_load_ms
+        sliced.persistent_cache_hit = index.persistent_cache_hit
+        sliced.cold_build_failed = index.cold_build_failed
+        sliced.cache_digest = index.cache_digest
+        return sliced
+
+    @staticmethod
+    def bm25(
+        index: RetrievalIndex,
+        query: str,
+        limit: int,
+        k1: float = 1.5,
+        b: float = 0.75,
+    ) -> list[tuple[int, float]]:
+        if k1 <= 0 or not 0 <= b <= 1:
+            raise ValueError("BM25 requires k1 > 0 and b in [0, 1]")
         query_terms = terms(query)
         if not query_terms or not index.chunks:
             return []
@@ -224,8 +301,8 @@ class AskPaperRetrievalService:
                 if not frequency:
                     continue
                 idf = math.log(1 + (n - index.document_frequency[term] + 0.5) / (index.document_frequency[term] + 0.5))
-                denominator = frequency + 1.5 * (1 - 0.75 + 0.75 * index.lengths[position] / max(1, average))
-                score += idf * frequency * 2.5 / denominator
+                denominator = frequency + k1 * (1 - b + b * index.lengths[position] / max(1, average))
+                score += idf * frequency * (k1 + 1) / denominator
             if score > 0:
                 scores.append((position, score))
         return sorted(scores, key=lambda item: (-item[1], item[0]))[:limit]
@@ -262,28 +339,30 @@ class AskPaperRetrievalService:
         page_end: int | None = None,
     ) -> RetrievalResult:
         path = Path(state_path)
-        import json
-
-        state = json.loads(path.read_text(encoding="utf-8"))
+        state_bytes = path.read_bytes()
+        state = json.loads(state_bytes)
         chunks = [c for c in (state.get("document") or {}).get("chunks", []) if isinstance(c, dict)]
-        if section:
-            chunks = [c for c in chunks if c.get("section") == section]
-        if page_start is not None and page_end is not None:
-            chunks = [
-                chunk
-                for chunk in chunks
-                if _chunk_overlaps_pages(chunk, page_start, page_end)
-            ]
-        index, degraded = self._index(
+        full_index, degraded, memory_hit = self._index(
             task_id,
             path,
-            section,
-            page_start,
-            page_end,
+            state_content_sha256(state),
             chunks,
         )
+        positions = [
+            position
+            for position, chunk in enumerate(chunks)
+            if (not section or chunk.get("section") == section)
+            and (
+                page_start is None
+                or page_end is None
+                or _chunk_overlaps_pages(chunk, page_start, page_end)
+            )
+        ]
+        index = self._slice(full_index, positions)
         candidate_count = self.settings.ask_candidate_count
-        lexical = self.bm25(index, query, candidate_count)
+        lexical = self.bm25(
+            index, query, candidate_count, self.settings.ask_bm25_k1, self.settings.ask_bm25_b
+        )
         semantic_raw: list[tuple[int, float]] = []
         if index.vectors is not None:
             try:
@@ -379,12 +458,34 @@ class AskPaperRetrievalService:
             ),
             final_scores=[score_by_position.get(position, score) for position, score in final],
             candidate_scores=candidate_scores, reranker_mode=mode,
+            bm25_scores_raw=[
+                {
+                    "chunk_id": index.chunks[position].get("chunk_id"),
+                    "score": score,
+                    "rank": rank,
+                }
+                for rank, (position, score) in enumerate(lexical, 1)
+            ],
+            vector_scores_raw=[
+                {
+                    "chunk_id": index.chunks[position].get("chunk_id"),
+                    "score": score,
+                    "rank": rank,
+                }
+                for rank, (position, score) in enumerate(semantic_raw, 1)
+            ],
             reranker_latency_ms=reranker_latency_ms, reranker_top_score=top_score,
             reranker_applied=mode == "enabled" and reranker_scores is not None,
             reranker_rank_changes=reranker_rank_changes,
             answerable=answerable, evidence_threshold=self.settings.ask_evidence_threshold,
             answerability_threshold=self.settings.ask_answerability_threshold,
             calibration_version=self.settings.ask_calibration_version,
+            index_build_ms=index.index_build_ms,
+            index_load_ms=index.index_load_ms,
+            index_cache_hit=index.persistent_cache_hit,
+            index_memory_cache_hit=memory_hit,
+            index_cold_build_failed=index.cold_build_failed,
+            index_cache_digest=index.cache_digest,
         )
         logger.info(
             "Ask Paper retrieval query_sha256=%s bm25=%d vector=%d/%d removed=%d rrf=%d "
@@ -415,9 +516,12 @@ def get_retrieval_service(settings: AppSettings) -> AskPaperRetrievalService:
         settings.embedding_base_url,
         settings.ask_candidate_count,
         settings.ask_evidence_count,
+        settings.ask_bm25_k1,
+        settings.ask_bm25_b,
         settings.ask_rrf_k,
         settings.ask_vector_min_similarity,
         settings.ask_retrieval_cache_size,
+        settings.ask_index_dir,
         settings.ask_reranker_mode,
         settings.ask_reranker_provider,
         settings.ask_reranker_model,
@@ -431,3 +535,69 @@ def get_retrieval_service(settings: AppSettings) -> AskPaperRetrievalService:
             _default_service = AskPaperRetrievalService(settings)
             _default_signature = signature
         return _default_service
+
+
+def prebuild_retrieval_index(
+    task_id: str,
+    state_path: str | Path,
+    settings: AppSettings,
+    *,
+    embedder: BaseEmbedder | None = None,
+) -> dict[str, Any]:
+    """Best-effort persistent full-paper vector build with public-safe diagnostics."""
+    if not settings.ask_index_prebuild_enabled:
+        return {
+            "schema_version": INDEX_SCHEMA,
+            "status": "disabled",
+            "embedding_model": settings.embedding_model,
+        }
+    if settings.use_mock_embedding:
+        return {
+            "schema_version": INDEX_SCHEMA,
+            "status": "not_applicable",
+            "embedding_model": settings.embedding_model,
+        }
+    path = Path(state_path)
+    started = time.perf_counter()
+    try:
+        state_bytes = path.read_bytes()
+        state = json.loads(state_bytes)
+        chunks = [
+            chunk
+            for chunk in (state.get("document") or {}).get("chunks", [])
+            if isinstance(chunk, dict)
+        ]
+        if not chunks:
+            raise ValueError("state contains no chunks")
+        service = AskPaperRetrievalService(settings, embedder=embedder)
+        index, degraded, _ = service._index(
+            task_id, path, state_content_sha256(state), chunks
+        )
+        metadata: dict[str, Any] = {
+            "schema_version": INDEX_SCHEMA,
+            "status": "degraded" if degraded or index.vectors is None else "ready",
+            "embedding_provider": settings.embedding_provider,
+            "embedding_model": settings.embedding_model,
+            "chunk_count": len(chunks),
+            "build_ms": round(index.index_build_ms, 3),
+            "load_ms": round(index.index_load_ms, 3),
+            "cache_hit": index.persistent_cache_hit,
+            "cache_digest": index.cache_digest,
+            "cold_build_failed": index.cold_build_failed,
+            "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
+        }
+        if degraded:
+            metadata["degraded_reason"] = degraded
+        return metadata
+    except Exception as exc:
+        logger.warning("Ask Paper index prebuild degraded: %s", type(exc).__name__)
+        return {
+            "schema_version": INDEX_SCHEMA,
+            "status": "degraded",
+            "embedding_provider": settings.embedding_provider,
+            "embedding_model": settings.embedding_model,
+            "build_ms": round((time.perf_counter() - started) * 1000, 3),
+            "cache_hit": False,
+            "cold_build_failed": True,
+            "degraded_reason": f"index_prebuild_unavailable:{type(exc).__name__}",
+        }

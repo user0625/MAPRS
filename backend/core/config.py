@@ -62,6 +62,8 @@ class AppSettings(BaseSettings):
     sse_heartbeat_seconds: int = Field(default=15, ge=1)
     ask_candidate_count: int = Field(default=20, ge=1, le=100)
     ask_evidence_count: int = Field(default=6, ge=1, le=50)
+    ask_bm25_k1: float = Field(default=1.5, gt=0, le=10)
+    ask_bm25_b: float = Field(default=0.75, ge=0, le=1)
     ask_rrf_k: int = Field(default=60, ge=1, le=1000)
     ask_vector_min_similarity: float = Field(default=0.0, ge=-1.0, le=1.0)
     ask_reranker_mode: Literal["disabled", "shadow", "enabled"] = "disabled"
@@ -78,6 +80,8 @@ class AppSettings(BaseSettings):
     ask_history_max_tokens: int = Field(default=2000, ge=128, le=32000)
     ask_evidence_max_tokens: int = Field(default=6000, ge=128, le=128000)
     ask_retrieval_cache_size: int = Field(default=8, ge=1, le=128)
+    ask_index_prebuild_enabled: bool = True
+    ask_index_dir: Path = Path("backend/outputs/indexes")
     comparison_paper_max_tokens: int = Field(default=6000, ge=256, le=64000)
     comparison_final_max_tokens: int = Field(default=12000, ge=512, le=128000)
     comparison_evidence_per_paper: int = Field(default=12, ge=1, le=50)
@@ -118,6 +122,7 @@ class AppSettings(BaseSettings):
         "output_dir",
         "report_dir",
         "log_dir",
+        "ask_index_dir",
         mode="before",
     )
     @classmethod
@@ -162,6 +167,7 @@ class AppSettings(BaseSettings):
             self.output_dir,
             self.report_dir,
             self.log_dir,
+            self.ask_index_dir,
         ]:
             self.resolve_path(directory).mkdir(parents=True, exist_ok=True)
 

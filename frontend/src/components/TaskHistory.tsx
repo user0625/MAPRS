@@ -18,7 +18,7 @@ function StatusBadge({ status }: { status: TaskStatus }) {
   return <span className={`status-badge status-${status}`}><span className="status-dot" />{status}</span>
 }
 
-export function TaskHistory({ refreshToken }: { refreshToken: number }) {
+export function TaskHistory({ refreshToken, onSearchDocument }: { refreshToken: number; onSearchDocument?: (taskId: string) => void }) {
   const [tasks, setTasks] = useState<TaskStatusResponse[]>([])
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
@@ -109,7 +109,7 @@ export function TaskHistory({ refreshToken }: { refreshToken: number }) {
     <section className="history-detail">
       {!selectedId ? <div className="panel detail-empty">Select a task to see its complete details.</div> : detailLoading && !detail ? <div className="panel detail-empty">Loading details…</div> : !detail ? <div className="panel detail-empty">{error || 'Task details are unavailable.'}</div> : <>
         <div className="panel detail-card">
-          <div className="detail-title"><div><span className="eyebrow">Analysis detail</span><h2>{taskName(detail)}</h2></div><div className="detail-actions"><StatusBadge status={detail.status} />{(detail.status === 'pending' || detail.status === 'running') && <button disabled={actionPending} onClick={() => void runAction('cancel')}>Cancel</button>}{detail.status === 'failed' && detail.last_checkpoint_step && <button disabled={actionPending} onClick={() => void runAction('resume')}>Resume</button>}{(detail.status === 'failed' || detail.status === 'canceled') && <button disabled={actionPending} onClick={() => void runAction('retry')}>Retry</button>}{['completed','failed','canceled'].includes(detail.status) && <><button disabled={actionPending} onClick={() => void runAction('rerun')}>Rerun</button><button disabled={actionPending} onClick={() => void runAction('delete')}>Delete</button></>}</div></div>
+          <div className="detail-title"><div><span className="eyebrow">Analysis detail</span><h2>{taskName(detail)}</h2></div><div className="detail-actions"><StatusBadge status={detail.status} />{detail.status === 'completed' && onSearchDocument && <button onClick={() => onSearchDocument(detail.task_id)}>Search document</button>}{(detail.status === 'pending' || detail.status === 'running') && <button disabled={actionPending} onClick={() => void runAction('cancel')}>Cancel</button>}{detail.status === 'failed' && detail.last_checkpoint_step && <button disabled={actionPending} onClick={() => void runAction('resume')}>Resume</button>}{(detail.status === 'failed' || detail.status === 'canceled') && <button disabled={actionPending} onClick={() => void runAction('retry')}>Retry</button>}{['completed','failed','canceled'].includes(detail.status) && <><button disabled={actionPending} onClick={() => void runAction('rerun')}>Rerun</button><button disabled={actionPending} onClick={() => void runAction('delete')}>Delete</button></>}</div></div>
           {detail.error_message && <div className="error-message"><strong>Task failed</strong>{detail.error_message}</div>}
           <dl className="detail-fields">
             <div className="wide"><dt>Paper title</dt><dd>{detail.paper_title || '—'}</dd></div>

@@ -63,7 +63,13 @@ class RequestPolicy:
 
 
 def classify_exception(exc: Exception) -> tuple[bool, type[RequestPolicyError]]:
-    status = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    status = (
+        getattr(exc, "status_code", None)
+        or getattr(exc, "code", None)
+        or getattr(response, "status_code", None)
+        or getattr(response, "status", None)
+    )
     name = type(exc).__name__.lower()
     if status == 429:
         return True, RateLimitError
@@ -71,9 +77,13 @@ def classify_exception(exc: Exception) -> tuple[bool, type[RequestPolicyError]]:
         if status >= 500:
             return True, UpstreamError
         return False, UpstreamError
-    if "timeout" in name:
+    reason_name = type(getattr(exc, "reason", None)).__name__.lower()
+    combined_name = f"{name} {reason_name}"
+    if "timeout" in combined_name:
         return True, NetworkTimeoutError
-    if any(token in name for token in ("connection", "connecterror", "networkerror")):
+    if any(token in combined_name for token in (
+        "connection", "connecterror", "networkerror", "gaierror", "sslerror"
+    )):
         return True, UpstreamError
     return False, UpstreamError
 

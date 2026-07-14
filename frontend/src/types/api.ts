@@ -106,6 +106,52 @@ export interface AskMessage { id:string; conversation_id:string; role:'user'|'as
 export interface ConversationDetail extends Conversation { messages:AskMessage[]; total:number; limit:number; offset:number }
 export interface AskAccepted { user_message_id:string|null; assistant_message_id:string; status:string }
 
+export type DocumentSearchMode = 'auto' | 'bm25'
+export type DocumentSearchModeUsed = 'hybrid' | 'bm25' | 'degraded_to_bm25'
+export type DocumentSearchIndexSource = 'memory_hit' | 'disk_hit' | 'cold_build' | 'unavailable'
+export interface DocumentSearchRequest {
+  query: string
+  mode: DocumentSearchMode
+  section?: string | null
+  page_start?: number | null
+  page_end?: number | null
+  top_k: number
+}
+export interface DocumentSearchContext {
+  relation: 'before' | 'after'
+  chunk_id: string
+  text: string
+  section: string | null
+  page_start: number | null
+  page_end: number | null
+}
+export interface DocumentSearchHit {
+  rank: number
+  chunk_id: string
+  text: string
+  section: string | null
+  page_start: number | null
+  page_end: number | null
+  sources: Array<'bm25' | 'vector'>
+  bm25_score: number | null
+  vector_score: number | null
+  hybrid_score: number | null
+  context: DocumentSearchContext[]
+}
+export interface DocumentSearchResponse {
+  task_id: string
+  query: string
+  mode_used: DocumentSearchModeUsed
+  hits: DocumentSearchHit[]
+  diagnostics: {
+    actual_mode: DocumentSearchModeUsed
+    candidate_count: number
+    elapsed_ms: number
+    index_source: DocumentSearchIndexSource
+    fallback_reason: 'index_build_unavailable' | 'query_embedding_unavailable' | null
+  }
+}
+
 export type ComparisonStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
 export interface ComparisonPaper { source_task_id:string; paper_id:string|null; title:string; authors:string[]; year:number|null; position:number }
 export interface ComparisonResponse {

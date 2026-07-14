@@ -7,6 +7,8 @@ import { UploadPanel } from './components/UploadPanel'
 import { TaskHistory } from './components/TaskHistory'
 import { AskPaper } from './components/AskPaper'
 import { ComparePapers } from './components/ComparePapers'
+import { SearchDocument } from './components/SearchDocument'
+import type { AskHandoff } from './components/SearchDocument'
 import type {
   OutputLanguage,
   TaskReportResponse,
@@ -19,7 +21,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'new' | 'history' | 'ask' | 'compare'>('new')
+  const [activeTab, setActiveTab] = useState<'new' | 'history' | 'search' | 'ask' | 'compare'>('new')
   const [historyRefresh, setHistoryRefresh] = useState(0)
   const [taskId, setTaskId] = useState<string | null>(null)
   const live = useTaskEvents(taskId)
@@ -29,6 +31,8 @@ function App() {
   const [submitting, setSubmitting] = useState(false)
   const [actionPending, setActionPending] = useState(false)
   const generationRef = useRef(0)
+  const [searchTaskId, setSearchTaskId] = useState<string | null>(null)
+  const [askHandoff, setAskHandoff] = useState<AskHandoff | null>(null)
 
   const handleSubmit = useCallback(async (
     file: File,
@@ -93,6 +97,7 @@ function App() {
         <nav className="workspace-tabs" aria-label="Workspace views">
           <button className={activeTab === 'new' ? 'active' : ''} onClick={() => setActiveTab('new')}>New Analysis</button>
           <button className={activeTab === 'history' ? 'active' : ''} onClick={() => setActiveTab('history')}>Task History</button>
+          <button className={activeTab === 'search' ? 'active' : ''} onClick={() => setActiveTab('search')}>Search Document</button>
           <button className={activeTab === 'ask' ? 'active' : ''} onClick={() => setActiveTab('ask')}>Ask Paper</button>
           <button className={activeTab === 'compare' ? 'active' : ''} onClick={() => setActiveTab('compare')}>Compare Papers</button>
         </nav>
@@ -109,8 +114,9 @@ function App() {
             )}
             <ReportViewer report={report} loading={submitting} />
           </div>
-        </div> : activeTab === 'history' ? <TaskHistory refreshToken={historyRefresh} /> : activeTab === 'ask' ?
-          <AskPaper initialTaskId={task?.status === 'completed' ? task.task_id : null} onOpenReport={(id) => { setTaskId(id); setActiveTab('new') }} /> : <ComparePapers />}
+        </div> : activeTab === 'history' ? <TaskHistory refreshToken={historyRefresh} onSearchDocument={(id) => { setSearchTaskId(id); setActiveTab('search') }} /> : activeTab === 'search' ?
+          <SearchDocument initialTaskId={searchTaskId || (task?.status === 'completed' ? task.task_id : null)} onContinueAsk={(handoff) => { setAskHandoff(handoff); setActiveTab('ask') }} /> : activeTab === 'ask' ?
+          <AskPaper initialTaskId={task?.status === 'completed' ? task.task_id : null} handoff={askHandoff} onOpenReport={(id) => { setTaskId(id); setActiveTab('new') }} /> : <ComparePapers />}
       </main>
 
       <footer>

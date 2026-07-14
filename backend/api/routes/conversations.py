@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -23,9 +22,9 @@ from backend.api.schemas import (
     ConversationResponse,
     ConversationUpdate,
 )
-from backend.api.task_store import APITaskStatus
 from backend.api import task_store as store_module
-from backend.ask_paper import sections_from_state
+from backend.api.task_state import completed_task as require_completed_task
+from backend.api.task_state import load_task_state, validate_scope as validate_task_scope
 from backend.core.config import get_settings
 
 router = APIRouter(tags=["ask-paper"])
@@ -37,12 +36,11 @@ def stores():
 
 def completed_task(task_id: str):
     tasks, _ = stores()
-    task = tasks.get_task(task_id)
-    if not task:
-        raise HTTPException(404, "Task not found.")
-    if task.status != APITaskStatus.COMPLETED:
-        raise HTTPException(409, "Ask Paper requires a completed task.")
-    return task
+    return require_completed_task(
+        tasks,
+        task_id,
+        conflict_detail="Ask Paper requires a completed task.",
+    )
 
 
 def conversation_or_404(conversation_id: str):
@@ -178,30 +176,13 @@ def validate_scope(
 ):
     if not section and page_start is None:
         return
-    if not task.state_json_path or not Path(task.state_json_path).is_file():
-        raise HTTPException(409, "Paper state is unavailable.")
-    state = json.loads(Path(task.state_json_path).read_text(encoding="utf-8"))
-    if section and section not in sections_from_state(state):
-        raise HTTPException(422, "Unknown paper section.")
-    if page_end is None:
-        return
-    document = state.get("document") or {}
-    configured_pages = task.task_metadata.get("num_pages", 0)
-    page_count = configured_pages if isinstance(configured_pages, int) else 0
-    pages = document.get("pages") or []
-    if isinstance(pages, list):
-        page_count = max(page_count, len(pages))
-    chunks = document.get("chunks") or []
-    chunk_ends = [
-        value
-        for chunk in chunks
-        if isinstance(chunk, dict)
-        for value in [chunk.get("page_end") or chunk.get("page_start")]
-        if isinstance(value, int)
-    ]
-    page_count = max([page_count, *chunk_ends])
-    if page_count and page_end > page_count:
-        raise HTTPException(422, f"Page range exceeds the paper's {page_count} pages.")
+    state = load_task_state(
+        task,
+        unavailable_status=409,
+        unavailable_detail="Paper state is unavailable.",
+        invalid_detail="Paper state is invalid.",
+    )
+    validate_task_scope(task, state, section, page_start, page_end)
 
 
 @router.post(

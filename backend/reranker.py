@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from abc import ABC, abstractmethod
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
+
+from backend.core.request_policy import RequestPolicy
+
+
+logger = logging.getLogger(__name__)
+RERANK_INSTRUCTION = (
+    "For scientific-paper question answering, assign a high relevance score only to a "
+    "passage that contains evidence directly answering the question. Background, topical "
+    "overlap, and keyword matches without an answer must receive a low score."
+)
 
 
 class BaseReranker(ABC):
@@ -23,10 +35,18 @@ class OpenAICompatibleReranker(BaseReranker):
     the original passage order required by :class:`BaseReranker`.
     """
 
-    def __init__(self, api_key: str, model_name: str, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model_name: str,
+        base_url: str | None = None,
+        request_policy: RequestPolicy | None = None,
+    ) -> None:
         self.api_key = api_key
         self.model_name = model_name
         self.base_url = (base_url or "").strip()
+        self.request_policy = request_policy
+        self.request_count = 0
 
     def _endpoint(self) -> str:
         if not self.base_url:
@@ -48,7 +68,7 @@ class OpenAICompatibleReranker(BaseReranker):
                 "query": query,
                 "documents": passages,
                 "top_n": len(passages),
-                "instruct": "Given a scientific question, retrieve passages that answer the question.",
+                "instruct": RERANK_INSTRUCTION,
             },
             ensure_ascii=False,
         ).encode("utf-8")
@@ -62,8 +82,28 @@ class OpenAICompatibleReranker(BaseReranker):
             },
             method="POST",
         )
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - configured HTTPS API
-            body = json.loads(response.read().decode("utf-8"))
+        started = time.perf_counter()
+        starting_count = self.request_count
+        try:
+            def operation() -> object:
+                self.request_count += 1
+                with urlopen(request, timeout=timeout) as response:  # noqa: S310
+                    return json.loads(response.read().decode("utf-8"))
+
+            body = self.request_policy.call(operation) if self.request_policy else operation()
+        except Exception as exc:
+            logger.warning(
+                "Reranker request failed category=%s elapsed_ms=%.2f request_count=%d",
+                type(exc).__name__,
+                (time.perf_counter() - started) * 1000,
+                self.request_count - starting_count,
+            )
+            raise
+        logger.info(
+            "Reranker request completed elapsed_ms=%.2f request_count=%d",
+            (time.perf_counter() - started) * 1000,
+            self.request_count - starting_count,
+        )
         results = body.get("results") if isinstance(body, dict) else None
         if not isinstance(results, list):
             raise ValueError("reranker response has no results")

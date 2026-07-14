@@ -29,9 +29,11 @@ def test_pilot_view_is_read_only_and_never_allows_test():
 def test_pilot_report_is_non_production_and_redacted(tmp_path):
     _, _, all_cases = load_dataset(TARGET)
     by_question = {case.question: case for case in all_cases}
+    calls = {"count": 0}
 
     class Service:
         def retrieve(self, paper_id, state_path, question, section):
+            calls["count"] += 1
             case = by_question[question]
             ids = case.relevant_chunk_ids[:6]
             if not ids:
@@ -57,10 +59,13 @@ def test_pilot_report_is_non_production_and_redacted(tmp_path):
         output,
         "test-pilot",
         settings=AppSettings(_env_file=None, ask_reranker_model="fixture"),
-        candidate_counts=(20,),
-        vector_thresholds=(0,),
+        candidate_counts=(20, 30),
+        vector_thresholds=(0, 0.2),
         evidence_thresholds=(0,),
         answerability_thresholds=(0.5,),
+        bm25_k1_values=(1.2, 1.5),
+        bm25_b_values=(0.5, 0.75),
+        rrf_k_values=(40, 60),
         service_factory=lambda settings: Service(),
     )
     payload = output.read_text(encoding="utf-8")
@@ -70,4 +75,7 @@ def test_pilot_report_is_non_production_and_redacted(tmp_path):
     assert artifact["reranker_mode"] == "disabled"
     assert artifact["production_enablement_recommendation"] is None
     assert "cases" not in artifact["selected_validation_report"]
+    assert artifact["candidate_collection_count"] == 1
+    assert artifact["reranker_shadow_count"] == 1
+    assert calls["count"] == 40  # 20 cases collected once + one selected shadow
     assert all(case.question not in payload for case in all_cases)
