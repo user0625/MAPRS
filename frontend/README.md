@@ -1,16 +1,19 @@
 # Multi-Agent Paper Reader Frontend
 
-React + TypeScript + Vite 前端提供三个工作区：
+React + TypeScript + Vite 前端提供四个工作区：
 
 - **New Analysis**：上传 PDF，配置 query、语言、分析深度、目标读者、报告预设和可选自定义章节，轮询任务状态并展示 Markdown 报告。活动任务支持取消。
 - **Task History**：分页查看持久化历史和安全详情；展示论文信息、Prompt/结构化输出摘要、可折叠工作流时间线和报告。`failed`、`canceled` 任务支持重试。
 - **Ask Paper**：选择已完成论文和持久化会话，按全篇、章节和可选页码范围提问；支持会话搜索、删除、Markdown/JSON 引用归档、自动/中文/英文回答、断线续流、Evidence 抽屉、取消、失败重试和重命名。
+- **Compare Papers**：搜索并选择 2–5 篇已完成论文，创建持久化中英文对比；支持断点进度、响应式横向矩阵、来源标签、跨论文 Evidence、五种导出、取消、重试和删除。
 
 两个页面共享同一交互报告组件。报告支持一键复制和 Markdown、JSON、HTML、PDF、DOCX 下载；结构化产物可用时提供完整章节目录、大小写不敏感搜索、上一项/下一项定位，以及按需加载并缓存的 Evidence 详情。搜索不会隐藏目录项，匹配项仅作标记；`Reset` 或 `Overview` 会清空定位状态并返回报告顶部。旧任务或结构化接口不可用时自动保留完整 Markdown 阅读体验。
 
 桌面端报告正文使用独立滚动区域，证据显示为右侧抽屉；移动端使用自然页面高度、折叠目录和底部证据面板。证据面板支持 Escape 关闭、错误重试和焦点返回。Task History 桌面端继续保持 560px 双栏约束，移动端自动切换为单栏。
 
 Ask Paper 左栏中的论文和会话标题在关闭状态下受栏宽约束，展开选择或悬停时可查看完整标题。搜索由服务端限定在当前论文内；无匹配时显示明确空状态。提问区可填写 1-based 起止页，并与章节筛选取交集；范围会显示在消息上并随重试、刷新和归档保留。标题区可下载 Markdown/JSON 归档或确认后永久删除会话，生成期间这些操作禁用。回答流使用持久化事件序号去重；刷新、切换页面或短暂断网后会重新加载消息并从最后事件继续。回答中的 Evidence 标签复用报告证据抽屉，并可返回对应任务报告。
+
+Compare Papers 只列出 `completed` 任务，前端禁止选择少于 2 篇或多于 5 篇。创建后同时使用持久 SSE 和低频状态同步恢复进度；完成页按源任务顺序显示论文标签和七维矩阵。矩阵在窄屏保持表格语义并允许横向滚动。Evidence 抽屉展示来源论文、任务、chunk、页码、章节和快照正文；下载链接直接对应 Markdown、JSON、HTML、PDF、DOCX 附件。首版不提供新论文上传、远程来源或跨论文聊天。
 
 ## 本地开发
 
@@ -58,9 +61,9 @@ npm run lint
 npm run test:e2e
 ```
 
-Vitest、Testing Library 和 jsdom 覆盖交互报告与 Ask Paper 流式 hook。流测试验证 SSE CRLF 解码、重复事件去重、按最后 cursor 和 `Last-Event-ID` 重连，以及切换会话时中止旧消费器。
+Vitest、Testing Library 和 jsdom 覆盖交互报告、Ask Paper 流式 hook，以及 Compare Papers 的 2–5 篇限制、创建和矩阵渲染。流测试验证 SSE CRLF 解码、重复事件去重、按最后 cursor 和 `Last-Event-ID` 重连，以及切换会话时中止旧消费器。
 
-Playwright 使用 route interception 提供确定性的任务、会话、Evidence 和 SSE 数据，不依赖真实后端、LLM、Redis 或 Celery。浏览器用例覆盖页码范围、搜索与无结果、两种下载、删除确认与重选、生成期禁用，以及桌面/移动端布局。`npm run test:e2e` 会自动启动独立 Vite 服务，并运行桌面 Chromium 与 Pixel 7 移动端项目；失败时保留截图、视频和 trace。fixture 仅拦截 URL 根路径下的 `/api/`，避免误拦截 Vite 的 `/src/api/` 源码模块。首次运行前如缺少浏览器或系统依赖，可执行：
+Playwright 使用 route interception 提供确定性的任务、会话、比较、Evidence 和 SSE 数据，不依赖真实后端、LLM、Redis 或 Celery。浏览器用例覆盖页码范围、搜索与无结果、下载、删除确认与重选、生成期禁用、比较创建、跨论文 Evidence，以及桌面/移动端横向矩阵。`npm run test:e2e` 会自动启动独立 Vite 服务，并运行桌面 Chromium 与 Pixel 7 移动端项目；失败时保留截图、视频和 trace。fixture 仅拦截 URL 根路径下的 `/api/`，避免误拦截 Vite 的 `/src/api/` 源码模块。首次运行前如缺少浏览器或系统依赖，可执行：
 
 ```bash
 npx playwright install chromium

@@ -139,3 +139,40 @@ def answer_paper_question(self, message_id: str) -> None:
 def enqueue_answer(message_id: str) -> str:
     result = answer_paper_question.apply_async(args=[message_id])
     return result.id
+
+
+def execute_comparison(comparison_id: str) -> None:
+    from backend.api.comparison_store import comparison_store_for
+    from backend.comparisons.exporter import ComparisonExporter
+    from backend.comparisons.service import build_comparison
+
+    settings = get_settings()
+    store = comparison_store_for(get_store())
+    if not store.claim(comparison_id):
+        return
+    try:
+        store.progress(comparison_id, "load_sources", 10, "Loading source states.")
+        if store.is_cancel_requested(comparison_id):
+            return
+        store.progress(comparison_id, "retrieve_evidence", 35, "Retrieving cross-paper evidence.")
+        structured, evidence = build_comparison(comparison_id, store, settings)
+        if store.is_cancel_requested(comparison_id):
+            return
+        store.save_evidence(evidence)
+        store.progress(comparison_id, "validate_citations", 75, "Validating citation whitelist.")
+        output_dir = settings.resolve_path(settings.report_dir) / "comparisons"
+        artifacts = ComparisonExporter().save_all(structured, output_dir, comparison_id)
+        store.complete(comparison_id, artifacts["markdown"], artifacts["json"], artifacts)
+    except Exception as exc:
+        logger.exception("Comparison %s failed", comparison_id)
+        store.fail(comparison_id, str(exc))
+
+
+@celery_app.task(bind=True, autoretry_for=(ConnectionError, TimeoutError), retry_backoff=True)
+def compare_papers(self, comparison_id: str) -> None:
+    execute_comparison(comparison_id)
+
+
+def enqueue_comparison(comparison_id: str) -> str:
+    result = compare_papers.apply_async(args=[comparison_id])
+    return result.id

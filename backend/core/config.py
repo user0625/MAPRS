@@ -78,6 +78,9 @@ class AppSettings(BaseSettings):
     ask_history_max_tokens: int = Field(default=2000, ge=128, le=32000)
     ask_evidence_max_tokens: int = Field(default=6000, ge=128, le=128000)
     ask_retrieval_cache_size: int = Field(default=8, ge=1, le=128)
+    comparison_paper_max_tokens: int = Field(default=6000, ge=256, le=64000)
+    comparison_final_max_tokens: int = Field(default=12000, ge=512, le=128000)
+    comparison_evidence_per_paper: int = Field(default=12, ge=1, le=50)
     celery_task_max_retries: int = Field(default=3, ge=0)
     celery_visibility_timeout: int = Field(default=3600, ge=60)
 

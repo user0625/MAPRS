@@ -109,6 +109,34 @@ def collect_raw(
     return _collect_raw(directory, split, settings, service_factory, embedder, reranker)
 
 
+def collect_raw_cases(
+    directory: Path,
+    cases: Iterable[EvaluationCase],
+    settings: AppSettings,
+    *,
+    service_factory: ServiceFactory | None = None,
+    embedder: BaseEmbedder | None = None,
+    reranker: BaseReranker | None = None,
+) -> list[RawCase]:
+    """Evaluate an explicit non-test, in-memory view of cases.
+
+    This is used by the pilot gate so expert decisions can be applied without
+    rewriting the source dataset or promoting candidate annotations to gold.
+    """
+    selected = list(cases)
+    if any(case.split == Split.TEST for case in selected):
+        raise ValueError("pilot/test case access is forbidden")
+    return _collect_raw(
+        directory,
+        Split.VALIDATION,
+        settings,
+        service_factory,
+        embedder,
+        reranker,
+        cases_override=selected,
+    )
+
+
 def _collect_raw(
     directory: Path,
     split: Split,
@@ -116,12 +144,14 @@ def _collect_raw(
     service_factory: ServiceFactory | None,
     embedder: BaseEmbedder | None,
     reranker: BaseReranker | None,
+    cases_override: list[EvaluationCase] | None = None,
 ) -> list[RawCase]:
     _, papers, cases = load_dataset(directory)
     paper_map = {paper.paper_id: paper for paper in papers}
     services: dict[str, AskPaperRetrievalService] = {}
     rows: list[RawCase] = []
-    for case in _eligible_cases(cases, split):
+    eligible = cases_override if cases_override is not None else _eligible_cases(cases, split)
+    for case in eligible:
         paper = paper_map[case.paper_id]
         service = services.get(paper.paper_id)
         if service is None:

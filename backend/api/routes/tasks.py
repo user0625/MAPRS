@@ -299,6 +299,13 @@ async def delete_task(task_id: str):
         raise HTTPException(
             status_code=409, detail="Only terminal tasks can be deleted."
         )
+    from backend.api.comparison_store import comparison_store_for
+    active_comparisons = comparison_store_for(task_store).active_for_task(task_id)
+    if active_comparisons:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task is used by active comparisons: {', '.join(active_comparisons)}",
+        )
     from backend.api.ask_store import AskStore
     AskStore(task_store).delete_task_data(task_id)
     task_store.soft_delete(task_id)

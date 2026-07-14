@@ -105,3 +105,27 @@ export interface Conversation { id:string; task_id:string; title:string; languag
 export interface AskMessage { id:string; conversation_id:string; role:'user'|'assistant'; content:string; status:'completed'|'generating'|'failed'|'canceled'; language:AskLanguage; section:string|null; page_start:number|null; page_end:number|null; citation_ids:string[]; error:string|null; retry_of:string|null; created_at:string; updated_at:string }
 export interface ConversationDetail extends Conversation { messages:AskMessage[]; total:number; limit:number; offset:number }
 export interface AskAccepted { user_message_id:string|null; assistant_message_id:string; status:string }
+
+export type ComparisonStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
+export interface ComparisonPaper { source_task_id:string; paper_id:string|null; title:string; authors:string[]; year:number|null; position:number }
+export interface ComparisonResponse {
+  id:string; title:string; focus:string; language:OutputLanguage; status:ComparisonStatus
+  progress:number; current_step:string|null; message:string; error_message:string|null
+  retry_of:string|null; report_available:boolean; structured_available:boolean
+  artifact_formats:string[]; last_event_id:number; created_at:string; updated_at:string
+  completed_at:string|null; papers:ComparisonPaper[]
+}
+export interface ComparisonListResponse { items:ComparisonResponse[]; total:number; limit:number; offset:number }
+export interface ComparisonCell { source_task_id:string; summary:string; evidence_ids:string[] }
+export interface ComparisonMatrixRow { dimension:string; cells:ComparisonCell[] }
+export interface ComparisonStructuredReport {
+  schema_version:'paper-comparison-v1'; comparison_id:string; title:string; focus:string; language:OutputLanguage
+  source_papers:Array<Omit<ComparisonPaper,'position'>>
+  profiles:Array<Record<string,unknown>>; matrix:ComparisonMatrixRow[]
+  synthesis:Record<string,{content:string;evidence_ids:string[]}>
+  claims:Array<{text:string;evidence_ids:string[]}>; evidence_ids:string[]; quality_warnings:string[]
+}
+export interface ComparisonEvidence {
+  comparison_id:string; evidence_id:string; source_task_id:string; paper_id:string|null; paper_title:string
+  chunk_id:string; page_start:number|null; page_end:number|null; section:string|null; text:string; score:number|null
+}

@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 
 from backend.api.task_store import APITaskStatus
+from backend.api.comparison_store import ComparisonStatus
 
 
 class HealthResponse(BaseModel):
@@ -224,3 +225,77 @@ class AskAcceptedResponse(BaseModel):
     user_message_id: str | None
     assistant_message_id: str
     status: str
+
+
+class ComparisonCreate(BaseModel):
+    task_ids: list[str] = Field(min_length=2, max_length=5)
+    title: str | None = Field(default=None, max_length=200)
+    focus: str = Field(default="方法、实验结果与局限的综合比较", min_length=1, max_length=4000)
+    language: OutputLanguage = "zh"
+
+    @model_validator(mode="after")
+    def unique_tasks(self):
+        if len(self.task_ids) != len(set(self.task_ids)):
+            raise ValueError("task_ids must be unique")
+        return self
+
+
+class ComparisonUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+class ComparisonPaperResponse(BaseModel):
+    source_task_id: str
+    paper_id: str | None = None
+    title: str
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    position: int
+
+
+class ComparisonResponse(BaseModel):
+    id: str
+    title: str
+    focus: str
+    language: OutputLanguage
+    status: ComparisonStatus
+    progress: int
+    current_step: str | None = None
+    message: str
+    error_message: str | None = None
+    retry_of: str | None = None
+    report_available: bool = False
+    structured_available: bool = False
+    artifact_formats: list[str] = Field(default_factory=list)
+    last_event_id: int = 0
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+    papers: list[ComparisonPaperResponse] = Field(default_factory=list)
+
+
+class ComparisonListResponse(BaseModel):
+    items: list[ComparisonResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class ComparisonReportResponse(BaseModel):
+    comparison_id: str
+    report_markdown: str
+    report_path: str | None = None
+
+
+class ComparisonEvidenceResponse(BaseModel):
+    comparison_id: str
+    evidence_id: str
+    source_task_id: str
+    paper_id: str | None = None
+    paper_title: str
+    chunk_id: str
+    page_start: int | None = None
+    page_end: int | None = None
+    section: str | None = None
+    text: str
+    score: float | None = None

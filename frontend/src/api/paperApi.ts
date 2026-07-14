@@ -9,6 +9,7 @@ import type {
   EvidenceItem,
   StructuredReportResponse,
   Conversation, ConversationDetail, AskAccepted, AskLanguage,
+  ComparisonResponse, ComparisonListResponse, ComparisonStructuredReport, ComparisonEvidence,
 } from '../types/api'
 
 const DEFAULT_API_BASE_URL = ''
@@ -144,3 +145,20 @@ export function askQuestion(id:string, content:string, section:string|null, lang
 export function cancelAnswer(conversationId:string,messageId:string) { return requestJson(`${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/cancel`,{method:'POST'}) }
 export function retryAnswer(conversationId:string,messageId:string):Promise<AskAccepted> { return requestJson(`${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/retry`,{method:'POST'}) }
 export function messageEventsUrl(conversationId:string,messageId:string,after=0) { return `${API_BASE_URL}/api/conversations/${conversationId}/messages/${messageId}/events?after=${after}` }
+
+export function createComparison(taskIds:string[], title:string, focus:string, language:OutputLanguage):Promise<ComparisonResponse> {
+  return requestJson(`${API_BASE_URL}/api/comparisons`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_ids:taskIds,title:title.trim()||null,focus,language})})
+}
+export function listComparisons(search='',status=''):Promise<ComparisonListResponse> {
+  const params=new URLSearchParams({limit:'100',offset:'0'}); if(search)params.set('search',search);if(status)params.set('status',status)
+  return requestJson(`${API_BASE_URL}/api/comparisons?${params}`)
+}
+export function getComparison(id:string):Promise<ComparisonResponse> { return requestJson(`${API_BASE_URL}/api/comparisons/${id}`) }
+export function updateComparisonTitle(id:string,title:string):Promise<ComparisonResponse> { return requestJson(`${API_BASE_URL}/api/comparisons/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})}) }
+export function cancelComparison(id:string):Promise<ComparisonResponse> { return requestJson(`${API_BASE_URL}/api/comparisons/${id}/cancel`,{method:'POST'}) }
+export function retryComparison(id:string):Promise<ComparisonResponse> { return requestJson(`${API_BASE_URL}/api/comparisons/${id}/retry`,{method:'POST'}) }
+export async function deleteComparison(id:string):Promise<void> { const response=await fetch(`${API_BASE_URL}/api/comparisons/${id}`,{method:'DELETE'});if(!response.ok)throw await responseError(response,`Delete failed (${response.status})`) }
+export function getComparisonStructured(id:string):Promise<ComparisonStructuredReport> { return requestJson(`${API_BASE_URL}/api/comparisons/${id}/report/structured`) }
+export function getComparisonEvidence(id:string,evidenceId:string):Promise<ComparisonEvidence> { return requestJson(`${API_BASE_URL}/api/comparisons/${id}/evidence/${encodeURIComponent(evidenceId)}`) }
+export function comparisonArtifactUrl(id:string,format:'markdown'|'json'|'html'|'pdf'|'docx'):string { return `${API_BASE_URL}/api/comparisons/${id}/artifacts/${format}` }
+export function comparisonEventsUrl(id:string,after=0):string { return `${API_BASE_URL}/api/comparisons/${id}/events?after=${after}` }

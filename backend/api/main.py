@@ -8,6 +8,7 @@ from backend.api.routes.analysis import router as analysis_router
 from backend.api.routes.health import router as health_router
 from backend.api.routes.tasks import router as tasks_router
 from backend.api.routes.conversations import router as conversations_router
+from backend.api.routes.comparisons import router as comparisons_router
 from backend.api import task_store as task_store_module
 from backend.api.task_store import DatabaseTaskStore
 from backend.core.config import get_settings
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
   app.include_router(analysis_router)
   app.include_router(tasks_router)
   app.include_router(conversations_router)
+  app.include_router(comparisons_router)
 
   return app
 
