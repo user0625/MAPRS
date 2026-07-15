@@ -110,6 +110,35 @@ Hybrid Precision@6 为 21.44%、降级率和延迟通过，但总门失败：Can
 
 正式 Retrieval 门通过，但跨折稳健性门失败，所以 artifact 明确记录 `validation_authorized=true`、`validation_recommended=false`、Embedding `keep_current`。Reranker 与 Refusal 门仍失败，Reranker 保持 `disabled`。tev4 不启动 validation/test，也不切换为默认 Embedding；该 artifact 仅作为失败审计记录。模型轮换实验在此收口，后续优先完成人工复核、Trace/并行对比与端到端演示。
 
+## 10 篇/80 题双语人工复核集
+
+现有 `generate_candidates` 仍只生成 `candidate`，不能自动升级为 gold。10 篇论文每篇 8 题完成单人逐项复核后，使用 reviewed-demo profile 校验：
+
+```bash
+uv run python -m backend.evaluation.validate_dataset \
+  --dataset backend/data/private_evaluation/reviewed-demo-v1 \
+  --profile reviewed-demo
+```
+
+该 profile 固定检查 10 篇/80 条、每篇 8 条且逐篇中英文各 4 条、25% 不可回答、至少 20% 多 Evidence、论文级 60/20/20 划分，并要求覆盖同义改写、跨章节、相邻段落、缩写、数字和近似不可回答干扰类型。manifest 还必须明示：`dataset_label: human-reviewed demonstration set`、`reviewer_count: 1` 以及不含 “expert” 的 `review_claim`。仓库不伪造尚未完成的人工复核内容。
+
+## Trace 与并行 Reader
+
+`ANALYSIS_TRACE_ENABLED=true` 默认记录 content-free 单任务 Trace，包括阶段耗时、模型、Prompt 版本、token、结构化输出重试、降级、估算成本和 Evidence 数量；不记录正文、完整问题、路径、请求头或密钥。价格通过 `LLM_INPUT_COST_PER_MILLION_USD` 与 `LLM_OUTPUT_COST_PER_MILLION_USD` 配置。
+
+并行 Reader 默认关闭。设置 `PARALLEL_READER_ENABLED=true` 后，只对 Planner 分配给 Reader 的独立任务并行，`READER_PARALLELISM` 控制并发上限，`READER_BRANCH_RETRIES` 控制每分支重试。分支状态按 Planner 顺序稳定聚合；部分失败会在 `reader_execution.coverage_gaps` 明示，全部失败才终止流程。Critic、Writer、Verifier 仍在汇总后串行运行。
+
+冻结集串并行验收使用：
+
+```bash
+uv run python -m backend.evaluation.parallel_comparison \
+  --serial serial-run.json --parallel parallel-run.json \
+  --output backend/outputs/evaluation/parallel-comparison.json \
+  --frozen-reviewed-run
+```
+
+两个输入必须具有相同 dataset freeze SHA 与配置 SHA。只有真实冻结集运行才传 `--frozen-reviewed-run`；仓库的格式夹具不会触发前端默认切换建议。只有 Evidence Recall、报告质量均不下降且 coverage gap 为零，输出才会建议将 parallel 设为默认。
+
 > 项目范围说明：本评估框架保留了生产化所需的严格边界。正式 gold、冻结 test 和生产 reranker 不作为文档检索增强 MVP 的前置条件；离线合成回归、显式降级和端到端演示完整性是当前优先级。
 
 ## Pilot-only 工程准入门
