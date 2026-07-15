@@ -12,7 +12,7 @@ from backend.scripts.generate_layout_demo_pdf import generate_layout_demo_pdf
     not Path("backend/data/raw/example.pdf").exists(),
     reason="Test PDF does not exist.",
 )
-def test_pdf_loader_loads_real_pdf():
+def test_pdf_loader_loads_bundled_demo_pdf():
     loader = PDFLoader()
 
     document = loader.load("backend/data/raw/example.pdf")
