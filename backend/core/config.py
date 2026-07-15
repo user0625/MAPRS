@@ -109,6 +109,15 @@ class AppSettings(BaseSettings):
     file_retention_days: int = Field(default=30, ge=0, le=3650)
     prompt_set_version: str = Field(default="v1", min_length=1, max_length=64)
 
+    # Content-free workflow telemetry and bounded Reader fan-out. Parallel mode
+    # remains opt-in until a frozen-set comparison demonstrates no quality loss.
+    analysis_trace_enabled: bool = True
+    parallel_reader_enabled: bool = False
+    reader_parallelism: int = Field(default=2, ge=1, le=16)
+    reader_branch_retries: int = Field(default=1, ge=0, le=5)
+    llm_input_cost_per_million_usd: float = Field(default=0.0, ge=0)
+    llm_output_cost_per_million_usd: float = Field(default=0.0, ge=0)
+
     # Phase D report quality
     hierarchical_page_threshold: int = Field(default=20, ge=1, le=10000)
     hierarchical_char_threshold: int = Field(default=60000, ge=1000, le=100000000)

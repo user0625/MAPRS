@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from backend.core.state import AnalysisState
 from backend.schemas.report import FinalReport
+from backend.core.telemetry import TraceEvent, append_state_event
 
 
 class ReportExportError(Exception):
@@ -89,6 +92,8 @@ class ReportExporter:
       raise ReportExportError("Cannot export because state.final_report is None.")
 
     saved_paths: dict[str, Path] = {}
+    started = time.perf_counter()
+    started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     saved_paths["markdown"] = self.save_markdown(
       report=state.final_report,
@@ -100,6 +105,16 @@ class ReportExporter:
         report=state.final_report,
         output_path=report_json_path,
       )
+
+    if state.metadata.get("trace") and not any(
+      item.get("stage") == "export" for item in state.metadata["trace"].get("events", [])
+      if isinstance(item, dict)
+    ):
+      append_state_event(state, TraceEvent(
+        stage="export", status="success", started_at=started_at,
+        duration_ms=(time.perf_counter() - started) * 1000,
+        evidence_count=len(state.evidence_bundle.items) if state.evidence_bundle else 0,
+      ))
 
     if state_json_path is not None:
       saved_paths["state_json"] = self.save_state_json(

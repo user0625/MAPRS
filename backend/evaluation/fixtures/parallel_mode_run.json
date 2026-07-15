@@ -1,0 +1,16 @@
+{
+  "schema_version": "analysis-mode-run-v1",
+  "mode": "parallel",
+  "dataset_version": "format-fixture-v1",
+  "frozen_test_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "configuration_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "case_count": 3,
+  "latency_p50_ms": 120.0,
+  "latency_p95_ms": 180.0,
+  "total_input_tokens": 1200,
+  "total_output_tokens": 600,
+  "estimated_cost_usd": 0.12,
+  "evidence_recall": 0.8,
+  "report_quality": 0.85,
+  "coverage_gap_rate": 0.0
+}

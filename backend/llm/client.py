@@ -70,6 +70,21 @@ class BaseLLMClient(ABC):
     provider: str
     structured_output_stats: dict[str, Any]
 
+    def _ensure_usage_stats(self) -> dict[str, int]:
+        if not hasattr(self, "usage_stats"):
+            self.usage_stats = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0}
+        return self.usage_stats
+
+    def _record_response_usage(self, response: LLMResponse) -> None:
+        stats = self._ensure_usage_stats()
+        usage = response.metadata.get("usage") or {}
+        input_tokens = int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0)
+        output_tokens = int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0)
+        stats["input_tokens"] += input_tokens
+        stats["output_tokens"] += output_tokens
+        stats["total_tokens"] += int(usage.get("total_tokens", input_tokens + output_tokens) or 0)
+        stats["calls"] += 1
+
     def _ensure_stats(self) -> dict[str, Any]:
         if not hasattr(self, "structured_output_stats"):
             self.structured_output_stats = {
@@ -151,6 +166,7 @@ class BaseLLMClient(ABC):
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        self._record_response_usage(response)
         return self._parse_json_response(response.content)
 
     def generate_pydantic(
@@ -342,6 +358,11 @@ class MockLLMClient(BaseLLMClient):
             metadata={
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "usage": {
+                    "input_tokens": len(last_message.split()),
+                    "output_tokens": min(200, len(last_message.split()) + 2),
+                    "total_tokens": len(last_message.split()) + min(200, len(last_message.split()) + 2),
+                },
             },
         )
 
@@ -460,6 +481,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         if content is None:
             raise LLMError("LLM returned empty content.")
 
+        usage = getattr(response, "usage", None)
         return LLMResponse(
             content=content,
             model=self.model_name,
@@ -468,6 +490,11 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             metadata={
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "usage": {
+                    "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                    "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+                    "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+                },
             },
         )
 

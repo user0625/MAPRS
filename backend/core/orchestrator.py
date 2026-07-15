@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from typing import Literal
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+import time
 import uuid
 import re
 
@@ -24,6 +27,9 @@ from backend.tools.vector_store import NumpyVectorStore
 from backend.core.request_policy import RequestPolicy
 from backend.llm.prompt_loader import PromptTemplateLoader
 from backend.core.report_quality import ReportQualityGate
+from backend.core.telemetry import (
+  TraceEvent, estimate_cost, llm_snapshot, trace_payload, usage_delta,
+)
 
 
 class OrchestratorError(Exception):
@@ -49,6 +55,7 @@ class PaperAnalysisOrchestrator:
     writer_agent: WriterAgent,
     metadata_extractor_agent: MetadataExtractorAgent | None = None,
     verifier_agent: VerifierAgent | None = None,
+    settings: AppSettings | None = None,
     ) -> None:
     self.pdf_loader = pdf_loader
     self.chunker = chunker
@@ -59,6 +66,9 @@ class PaperAnalysisOrchestrator:
     self.writer_agent = writer_agent
     self.metadata_extractor_agent = metadata_extractor_agent
     self.verifier_agent = verifier_agent
+    self.settings = settings or AppSettings()
+    self._trace_events: list[TraceEvent] = []
+    self._cancel_check = None
 
   def run(self, paper_input: PaperInput, output_language: Literal["zh", "en"]="zh",
           cancel_check=None, task_id: str | None = None,
@@ -85,6 +95,12 @@ class PaperAnalysisOrchestrator:
     state.metadata["output_language"] = output_language
     config = report_configuration or {}
     state.metadata["report_configuration"] = config
+    self._cancel_check = cancel_check
+    existing_trace = state.metadata.get("trace", {}) if initial_state else {}
+    self._trace_events = [
+      TraceEvent.model_validate(item) for item in existing_trace.get("events", [])
+      if isinstance(item, dict)
+    ] if self.settings.analysis_trace_enabled else []
 
     try:
       steps = (self._parse_pdf, self._chunk_document, self._plan_analysis,
@@ -101,21 +117,77 @@ class PaperAnalysisOrchestrator:
         if cancel_check and cancel_check():
           state.metadata["canceled"] = True
           state.error_message = "Task canceled by user."
+          self._record_cancellation(state)
           return state
-        step(state)
+        self._execute_traced_step(step, state)
         if checkpoint_callback:
           checkpoint_callback(step.__name__.removeprefix("_"), state)
         if cancel_check and cancel_check():
           state.metadata["canceled"] = True
           state.error_message = "Task canceled by user."
+          self._record_cancellation(state)
           return state
 
       state.mark_completed()
+      self._persist_trace(state)
       return state
 
     except Exception as exc:
       state.mark_failed(str(exc))
+      self._persist_trace(state)
       return state
+
+  def _execute_traced_step(self, step, state: AnalysisState) -> None:
+    if not self.settings.analysis_trace_enabled:
+      step(state)
+      return
+    client = self.reader_agent.llm_client
+    before = llm_snapshot(client)
+    warnings_before = {key for key in state.metadata if "warning" in key or "degraded" in key}
+    started_wall = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    started = time.perf_counter()
+    status = "success"
+    error_class = None
+    try:
+      step(state)
+    except Exception as exc:
+      status, error_class = "failed", type(exc).__name__
+      raise
+    finally:
+      after = llm_snapshot(client)
+      delta = usage_delta(before, after)
+      warnings_after = {key for key in state.metadata if "warning" in key or "degraded" in key}
+      evidence_count = len(state.evidence_bundle.items) if state.evidence_bundle else 0
+      self._trace_events.append(TraceEvent(
+        stage=step.__name__.removeprefix("_"), status=status,
+        started_at=started_wall, duration_ms=(time.perf_counter() - started) * 1000,
+        model=getattr(client, "model_name", None),
+        prompt_version=getattr(self, "prompt_metadata", {}).get("prompt_set_version", self.settings.prompt_set_version),
+        input_tokens=delta["input_tokens"], output_tokens=delta["output_tokens"],
+        retries=delta["retries"], fallback_count=len(warnings_after - warnings_before),
+        estimated_cost_usd=estimate_cost(
+          delta["input_tokens"], delta["output_tokens"],
+          self.settings.llm_input_cost_per_million_usd,
+          self.settings.llm_output_cost_per_million_usd,
+        ),
+        evidence_count=evidence_count, error_class=error_class,
+      ))
+      self._persist_trace(state)
+
+  def _persist_trace(self, state: AnalysisState) -> None:
+    if self.settings.analysis_trace_enabled:
+      state.metadata["trace"] = trace_payload(state.task_id, self._trace_events)
+
+  def _record_cancellation(self, state: AnalysisState) -> None:
+    if self.settings.analysis_trace_enabled:
+      self._trace_events.append(TraceEvent(
+        stage="workflow", status="canceled",
+        started_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        duration_ms=0, model=getattr(self.reader_agent.llm_client, "model_name", None),
+        prompt_version=self.settings.prompt_set_version,
+        evidence_count=len(state.evidence_bundle.items) if state.evidence_bundle else 0,
+      ))
+      self._persist_trace(state)
 
   def _parse_pdf(self, state: AnalysisState) -> None:
     state.update_status(AnalysisStatus.PARSING)
@@ -166,7 +238,7 @@ class PaperAnalysisOrchestrator:
       document.pages, self.pdf_loader.layout_mode,
     )
     depth = state.metadata.get("report_configuration", {}).get("analysis_depth", "standard")
-    settings = AppSettings()
+    settings = self.settings
     state.metadata["hierarchical_analysis"] = bool(
       depth == "deep" or len(document.pages) > settings.hierarchical_page_threshold
       or len(document.full_text()) > settings.hierarchical_char_threshold)
@@ -307,7 +379,19 @@ class PaperAnalysisOrchestrator:
       evidence_bundle=state.evidence_bundle,
     )
 
-    reader_notes = self.reader_agent.run(reader_input)
+    reader_tasks = [
+      task for task in state.analysis_plan.tasks
+      if task.assigned_to in (None, "reader")
+    ]
+    if self.settings.parallel_reader_enabled and len(reader_tasks) > 1:
+      reader_notes = self._read_parallel(state, reader_input, reader_tasks)
+    else:
+      reader_notes = self.reader_agent.run(reader_input)
+      state.metadata["reader_execution"] = {
+        "mode": "serial", "configured_parallelism": self.settings.reader_parallelism,
+        "branch_count": 1, "successful_branches": 1, "failed_branches": 0,
+        "coverage_gaps": [],
+      }
 
     state.reader_notes = reader_notes
 
@@ -318,7 +402,91 @@ class PaperAnalysisOrchestrator:
       metadata={
         "num_contributions": len(reader_notes.main_contributions),
         "num_key_terms": len(reader_notes.key_terms),
+        "execution": state.metadata.get("reader_execution", {}),
       },
+    )
+
+  def _read_parallel(self, state: AnalysisState, base_input: ReaderInput, tasks) -> object:
+    """Run Reader-only Planner tasks concurrently and aggregate in plan order."""
+    from backend.schemas.agent_io import AnalysisPlan, ReaderNotes
+
+    def run_branch(position, task):
+      started_wall = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+      started = time.perf_counter()
+      attempts = 0
+      error = None
+      notes = None
+      for attempt in range(self.settings.reader_branch_retries + 1):
+        attempts = attempt + 1
+        if self._cancel_check and self._cancel_check():
+          error = "Canceled"
+          break
+        plan = AnalysisPlan(
+          mode=base_input.analysis_plan.mode,
+          tasks=[task],
+          focus_questions=[task.description or task.name],
+          required_sections=base_input.analysis_plan.required_sections,
+          need_retrieval=base_input.analysis_plan.need_retrieval,
+          notes=None,
+        )
+        try:
+          notes = self.reader_agent.run(base_input.model_copy(update={"analysis_plan": plan}))
+          error = None
+          break
+        except Exception as exc:
+          error = type(exc).__name__
+      return position, task.task_id, notes, attempts, error, started_wall, (time.perf_counter() - started) * 1000
+
+    results = []
+    executor = ThreadPoolExecutor(max_workers=self.settings.reader_parallelism, thread_name_prefix="reader")
+    futures = [executor.submit(run_branch, position, task) for position, task in enumerate(tasks)]
+    try:
+      for future in as_completed(futures):
+        results.append(future.result())
+    finally:
+      executor.shutdown(wait=True, cancel_futures=True)
+    results.sort(key=lambda item: item[0])
+    successful = [item for item in results if item[2] is not None]
+    if not successful:
+      raise OrchestratorError("All parallel Reader branches failed or were canceled.")
+    gaps = [item[1] for item in results if item[2] is None]
+    branch_records = []
+    for _, task_id, notes, attempts, error, started_wall, duration_ms in results:
+      branch_records.append({
+        "branch_id": task_id, "status": "success" if notes is not None else "failed",
+        "attempts": attempts, "error_class": error, "duration_ms": round(duration_ms, 3),
+      })
+      if self.settings.analysis_trace_enabled:
+        self._trace_events.append(TraceEvent(
+          stage="reader_branch", status="success" if notes is not None else "failed",
+          started_at=started_wall, duration_ms=duration_ms,
+          model=getattr(self.reader_agent.llm_client, "model_name", None),
+          prompt_version=self.settings.prompt_set_version,
+          retries=max(0, attempts - 1), evidence_count=len(base_input.evidence_bundle.items)
+          if base_input.evidence_bundle else 0,
+          branch_id=task_id, error_class=error,
+          metadata={"position": next(item[0] for item in results if item[1] == task_id)},
+        ))
+    state.metadata["reader_execution"] = {
+      "mode": "parallel", "configured_parallelism": self.settings.reader_parallelism,
+      "branch_count": len(tasks), "successful_branches": len(successful),
+      "failed_branches": len(gaps), "coverage_gaps": gaps, "branches": branch_records,
+    }
+    notes_list = [item[2] for item in successful]
+
+    def join_text(name):
+      return "\n\n".join(dict.fromkeys(
+        value for notes in notes_list if (value := getattr(notes, name))
+      ))
+
+    def merge_list(name):
+      return list(dict.fromkeys(value for notes in notes_list for value in getattr(notes, name)))
+
+    return ReaderNotes(
+      problem_statement=join_text("problem_statement"), background=join_text("background"),
+      main_contributions=merge_list("main_contributions"), method_summary=join_text("method_summary"),
+      experiment_summary=join_text("experiment_summary"), conclusion_summary=join_text("conclusion_summary"),
+      key_terms=merge_list("key_terms"), important_evidence_ids=merge_list("important_evidence_ids"),
     )
 
   def _criticize_paper(self, state: AnalysisState) -> None:
@@ -383,6 +551,15 @@ class PaperAnalysisOrchestrator:
 
     final_report = self.writer_agent.run(writer_input)
 
+    coverage_gaps = state.metadata.get("reader_execution", {}).get("coverage_gaps", [])
+    if coverage_gaps:
+      gap_warning = (
+        "Parallel Reader coverage is incomplete; failed branches: "
+        + ", ".join(coverage_gaps)
+        + ". Verify the affected topics against the paper."
+      )
+      final_report.warning = " ".join(filter(None, [final_report.warning, gap_warning]))
+
     state.final_report = final_report
 
     state.add_step(
@@ -398,7 +575,7 @@ class PaperAnalysisOrchestrator:
   def _verify_report(self, state: AnalysisState) -> None:
     if state.final_report is None or state.document is None:
       raise OrchestratorError("Cannot verify a missing report or document.")
-    settings = AppSettings()
+    settings = self.settings
     gate = ReportQualityGate(settings.quality_pass_score, settings.citation_validity_min_score)
     summary = gate.evaluate(state.final_report, state.evidence_bundle, state.document)
     revision_instructions = list(summary.issues)
@@ -458,8 +635,9 @@ class PaperAnalysisOrchestrator:
     state.final_report.quality_summary = summary
     state.metadata["quality_evaluation"] = summary.model_dump(mode="json")
     if not summary.passed:
-      state.final_report.warning = (llm_result.user_warning if llm_result else None) or \
+      quality_warning = (llm_result.user_warning if llm_result else None) or \
         "报告未完全通过质量门禁；请结合原文核对未解决问题。"
+      state.final_report.warning = " ".join(filter(None, [state.final_report.warning, quality_warning]))
     state.final_report.markdown_content = None
     state.add_step(step_name="verify_report", status=StepStatus.SUCCESS,
       message="Report citation and quality checks completed.",
@@ -565,6 +743,7 @@ def create_default_orchestrator(settings: AppSettings) -> PaperAnalysisOrchestra
     writer_agent=WriterAgent(llm_client=llm_client),
     metadata_extractor_agent=MetadataExtractorAgent(llm_client=llm_client),
     verifier_agent=VerifierAgent(llm_client=llm_client),
+    settings=settings,
   )
   loader = PromptTemplateLoader()
   hashes = loader.template_hashes()
