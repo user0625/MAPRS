@@ -16,15 +16,20 @@ from backend.evaluation.calibrate import (
 from backend.evaluation.generate_candidates import CandidateBatch, CandidateQuestion, generate_dataset
 from backend.evaluation.real_dataset import (
     CASES_FILE,
+    MANIFEST_FILE,
+    PAPERS_FILE,
+    DatasetManifest,
     DatasetValidationError,
     DistractorType,
     EvaluationCase,
+    PaperRecord,
     ReviewStatus,
     Split,
     ValidationPolicy,
     freeze_test_split,
     load_dataset,
     validate_dataset,
+    write_jsonl,
 )
 from backend.reranker import BaseReranker
 from backend.tools.embedder import BaseEmbedder
@@ -86,6 +91,50 @@ def copied_fixture(tmp_path):
     return target
 
 
+def reviewed_demo_fixture(tmp_path):
+    target = tmp_path / "reviewed_demo"
+    target.mkdir()
+    manifest = DatasetManifest(
+        dataset_version="reviewed-demo-v1",
+        created_at="2026-07-15T00:00:00Z",
+        split_seed="reviewed-demo-seed",
+        chunking_config={"chunk_size": 1200, "chunk_overlap": 150},
+        dataset_label="human-reviewed demonstration set",
+        reviewer_count=1,
+        review_claim="Reviewed once by the project author.",
+    )
+    (target / MANIFEST_FILE).write_text(
+        manifest.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    splits = [Split.ANALYSIS] * 6 + [Split.VALIDATION] * 2 + [Split.TEST] * 2
+    papers = [
+        PaperRecord(
+            paper_id=f"paper-{paper_index}", state_path="unused.json",
+            split=split, state_sha256="a" * 64, chunk_ids=["c1", "c2"],
+        )
+        for paper_index, split in enumerate(splits)
+    ]
+    distractors = list(ValidationPolicy.reviewed_demo().required_distractor_types)
+    cases = []
+    for paper_index, paper in enumerate(papers):
+        for case_index in range(8):
+            answerable = case_index < 6
+            cases.append(EvaluationCase(
+                id=f"case-{paper_index}-{case_index}", paper_id=paper.paper_id,
+                split=paper.split, language="zh" if case_index < 4 else "en",
+                question=f"Reviewed question {paper_index}-{case_index}?",
+                answerable=answerable,
+                relevant_chunk_ids=["c1", "c2"] if answerable else [],
+                minimum_evidence_sets=[["c1", "c2"]] if answerable else [],
+                distractor_type=distractors[(paper_index * 8 + case_index) % len(distractors)],
+                review_status=ReviewStatus.REVIEWED,
+                reviewer_notes="Single-reviewer demonstration fixture.",
+            ))
+    write_jsonl(target / PAPERS_FILE, papers)
+    write_jsonl(target / CASES_FILE, cases)
+    return target
+
+
 def test_fixture_schema_and_paper_level_splits_validate():
     summary = validate_dataset(FIXTURE, ValidationPolicy.fixture())
     assert summary["paper_count"] == 5
@@ -93,6 +142,35 @@ def test_fixture_schema_and_paper_level_splits_validate():
     _, papers, cases = load_dataset(FIXTURE)
     split_by_paper = {paper.paper_id: paper.split for paper in papers}
     assert all(case.split == split_by_paper[case.paper_id] for case in cases)
+
+
+def test_reviewed_demo_profile_enforces_reviewed_bilingual_shape(tmp_path):
+    dataset = reviewed_demo_fixture(tmp_path)
+    summary = validate_dataset(
+        dataset, ValidationPolicy.reviewed_demo(), verify_state_files=False
+    )
+    assert summary["paper_count"] == 10
+    assert summary["reviewed_case_count"] == 80
+    assert summary["paper_split_ratios"] == {
+        "analysis": 0.6, "validation": 0.2, "test": 0.2,
+    }
+
+
+def test_reviewed_demo_profile_rejects_false_review_claim_and_missing_case(tmp_path):
+    dataset = reviewed_demo_fixture(tmp_path)
+    manifest = json.loads((dataset / MANIFEST_FILE).read_text(encoding="utf-8"))
+    manifest["review_claim"] = "Expert-reviewed benchmark."
+    (dataset / MANIFEST_FILE).write_text(
+        json.dumps(manifest) + "\n", encoding="utf-8"
+    )
+    case_lines = (dataset / CASES_FILE).read_text(encoding="utf-8").splitlines()
+    (dataset / CASES_FILE).write_text(
+        "\n".join(case_lines[:-1]) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(DatasetValidationError) as error:
+        validate_dataset(dataset, ValidationPolicy.reviewed_demo(), verify_state_files=False)
+    assert "reviewed case count 79 must equal 80" in error.value.errors
+    assert "reviewed demonstration set must disclose a non-expert review claim" in error.value.errors
 
 
 def test_production_ratio_policy_and_unique_ids_are_enforced(tmp_path):

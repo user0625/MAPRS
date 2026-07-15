@@ -35,6 +35,10 @@ class DistractorType(str, Enum):
     CROSS_SECTION = "cross_section"
     SYNONYM = "synonym"
     NOT_IN_PAPER = "not_in_paper"
+    ADJACENT_PARAGRAPH = "adjacent_paragraph"
+    ABBREVIATION = "abbreviation"
+    NUMERIC = "numeric"
+    NEAR_UNANSWERABLE = "near_unanswerable"
     NONE = "none"
 
 
@@ -132,6 +136,9 @@ class DatasetManifest(BaseModel):
     test_frozen: bool = False
     frozen_test_sha256: str | None = None
     frozen_at: str | None = None
+    dataset_label: str | None = None
+    reviewer_count: int | None = Field(default=None, ge=1)
+    review_claim: str | None = None
 
     @model_validator(mode="after")
     def freeze_fields_are_consistent(self) -> "DatasetManifest":
@@ -149,6 +156,12 @@ class ValidationPolicy(BaseModel):
     unanswerable_max: float = 0.30
     multi_evidence_min: float = 0.20
     split_tolerance: float = 0.08
+    exact_papers: int | None = None
+    exact_cases: int | None = None
+    exact_cases_per_paper: int | None = None
+    exact_language_cases_per_paper: int | None = None
+    require_review_disclosure: bool = False
+    required_distractor_types: list[DistractorType] = Field(default_factory=list)
 
     @classmethod
     def fixture(cls) -> "ValidationPolicy":
@@ -156,6 +169,23 @@ class ValidationPolicy(BaseModel):
             minimum_papers=1, minimum_cases=1, minimum_language_cases=0,
             unanswerable_min=0, unanswerable_max=1, multi_evidence_min=0,
             split_tolerance=1,
+        )
+
+    @classmethod
+    def reviewed_demo(cls) -> "ValidationPolicy":
+        """Policy for the 10-paper/80-question bilingual reviewed reviewed demonstration set."""
+        return cls(
+            minimum_papers=10, minimum_cases=80, minimum_language_cases=40,
+            unanswerable_min=0.25, unanswerable_max=0.25,
+            multi_evidence_min=0.20, split_tolerance=0.01,
+            exact_papers=10, exact_cases=80, exact_cases_per_paper=8,
+            exact_language_cases_per_paper=4,
+            require_review_disclosure=True,
+            required_distractor_types=[
+                DistractorType.SYNONYM, DistractorType.CROSS_SECTION,
+                DistractorType.ADJACENT_PARAGRAPH, DistractorType.ABBREVIATION,
+                DistractorType.NUMERIC, DistractorType.NEAR_UNANSWERABLE,
+            ],
         )
 
 
@@ -264,6 +294,37 @@ def validate_dataset(
     reviewed = [item for item in cases if item.review_status == ReviewStatus.REVIEWED]
     if len(reviewed) < policy.minimum_cases:
         errors.append(f"reviewed case count {len(reviewed)} is below {policy.minimum_cases}")
+    if policy.exact_papers is not None and len(papers) != policy.exact_papers:
+        errors.append(f"paper count {len(papers)} must equal {policy.exact_papers}")
+    if policy.exact_cases is not None and len(reviewed) != policy.exact_cases:
+        errors.append(f"reviewed case count {len(reviewed)} must equal {policy.exact_cases}")
+    if policy.exact_cases is not None and len(cases) != policy.exact_cases:
+        errors.append(f"total case count {len(cases)} must equal {policy.exact_cases}")
+    if policy.exact_cases_per_paper is not None:
+        reviewed_by_paper = Counter(item.paper_id for item in reviewed)
+        for paper in papers:
+            if reviewed_by_paper[paper.paper_id] != policy.exact_cases_per_paper:
+                errors.append(
+                    f"{paper.paper_id}: reviewed case count {reviewed_by_paper[paper.paper_id]} "
+                    f"must equal {policy.exact_cases_per_paper}"
+                )
+    if policy.exact_language_cases_per_paper is not None:
+        languages_by_paper = Counter((item.paper_id, item.language) for item in reviewed)
+        for paper in papers:
+            for language in ("zh", "en"):
+                count = languages_by_paper[(paper.paper_id, language)]
+                if count != policy.exact_language_cases_per_paper:
+                    errors.append(
+                        f"{paper.paper_id}: {language} reviewed case count {count} must equal "
+                        f"{policy.exact_language_cases_per_paper}"
+                    )
+    if policy.require_review_disclosure:
+        if manifest.reviewer_count != 1:
+            errors.append("reviewed demonstration set must disclose reviewer_count=1")
+        if manifest.dataset_label != "human-reviewed demonstration set":
+            errors.append("reviewed demonstration set must use dataset_label='human-reviewed demonstration set'")
+        if not manifest.review_claim or "expert" in manifest.review_claim.casefold():
+            errors.append("reviewed demonstration set must disclose a non-expert review claim")
     for case in cases:
         paper = paper_by_id.get(case.paper_id)
         if not paper:
@@ -300,6 +361,13 @@ def validate_dataset(
         for language in ("zh", "en"):
             if languages[language] < policy.minimum_language_cases:
                 errors.append(f"{language} reviewed cases {languages[language]} below {policy.minimum_language_cases}")
+        distractors = {item.distractor_type for item in reviewed}
+        missing_distractors = set(policy.required_distractor_types) - distractors
+        if missing_distractors:
+            errors.append(
+                "missing required distractor types "
+                + str(sorted(item.value for item in missing_distractors))
+            )
     expected_frozen = canonical_sha256(
         [item for item in cases if item.split == Split.TEST]
         + [item for item in papers if item.split == Split.TEST]
