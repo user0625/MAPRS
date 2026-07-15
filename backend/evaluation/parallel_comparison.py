@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class AnalysisModeRun(BaseModel):
-    """Aggregate from one serial/parallel pass over the same frozen reviewed demonstration set."""
+    """Aggregate from one serial/parallel pass over the same frozen reviewed set."""
 
     model_config = ConfigDict(extra="forbid")
 

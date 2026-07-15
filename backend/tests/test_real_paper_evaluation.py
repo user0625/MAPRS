@@ -92,7 +92,7 @@ def copied_fixture(tmp_path):
 
 
 def reviewed_demo_fixture(tmp_path):
-    target = tmp_path / "reviewed_demo"
+    target = tmp_path / "reviewed-demo"
     target.mkdir()
     manifest = DatasetManifest(
         dataset_version="reviewed-demo-v1",

@@ -173,7 +173,7 @@ class ValidationPolicy(BaseModel):
 
     @classmethod
     def reviewed_demo(cls) -> "ValidationPolicy":
-        """Policy for the 10-paper/80-question bilingual reviewed reviewed demonstration set."""
+        """Policy for a 10-paper/80-question bilingual reviewed demonstration set."""
         return cls(
             minimum_papers=10, minimum_cases=80, minimum_language_cases=40,
             unanswerable_min=0.25, unanswerable_max=0.25,
@@ -322,7 +322,10 @@ def validate_dataset(
         if manifest.reviewer_count != 1:
             errors.append("reviewed demonstration set must disclose reviewer_count=1")
         if manifest.dataset_label != "human-reviewed demonstration set":
-            errors.append("reviewed demonstration set must use dataset_label='human-reviewed demonstration set'")
+            errors.append(
+                "reviewed demonstration set must use "
+                "dataset_label='human-reviewed demonstration set'"
+            )
         if not manifest.review_claim or "expert" in manifest.review_claim.casefold():
             errors.append("reviewed demonstration set must disclose a non-expert review claim")
     for case in cases:

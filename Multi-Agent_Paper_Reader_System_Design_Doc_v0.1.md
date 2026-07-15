@@ -372,7 +372,7 @@ paper-agent/
 
 ## 13. Conclusion
 
-本设计文档定义了 Multi-Agent Paper Reader System 的 v0.1 方案。该系统聚焦于“用多智能体协作完成科研论文阅读与总结”这一核心目标，通过 Planner + Reader + RAG + Critic + Writer 的结构，建立一个可扩展、适合 MVP 开发、支持持续演进的 Agent 项目基础。
+本设计文档定义了 Multi-Agent Paper Reader System 的 v0.1 方案。该系统聚焦于“用多智能体协作完成科研论文阅读与总结”这一核心目标，通过 Planner + Reader + RAG + Critic + Writer 的结构，建立一个可扩展、适合 MVP 开发与持续演进的 Agent 项目基础。
 
 后续阶段可基于本设计文档继续细化：
 - Agent 接口规范

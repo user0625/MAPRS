@@ -40,5 +40,6 @@ system_architecture_design.png
 *.db
 *.sqlite
 *.sqlite3
+*.local.md
 # Virtual environments
 .venv

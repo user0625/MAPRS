@@ -15,13 +15,13 @@ from backend.evaluation.real_dataset import (
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate or freeze a private paper evaluation dataset.")
     parser.add_argument("--dataset", type=Path, required=True)
-    parser.add_argument("--profile", choices=("production", "reviewed_demo", "fixture"), default="production")
+    parser.add_argument("--profile", choices=("production", "reviewed-demo", "fixture"), default="production")
     parser.add_argument("--freeze-test", action="store_true")
     parser.add_argument("--skip-state-files", action="store_true", help="For schema-only checks on exported metadata.")
     args = parser.parse_args()
     policy = (
         ValidationPolicy.fixture() if args.profile == "fixture" else
-        ValidationPolicy.reviewed_demo() if args.profile == "reviewed_demo" else
+        ValidationPolicy.reviewed_demo() if args.profile == "reviewed-demo" else
         ValidationPolicy()
     )
     try:
