@@ -115,6 +115,7 @@ def run_preflight(
     *,
     embedder: BaseEmbedder | None = None,
     reranker: BaseReranker | None = None,
+    include_reranker: bool = True,
 ) -> dict[str, Any]:
     settings = settings or get_settings()
     checks: list[PreflightCheck] = []
@@ -155,7 +156,9 @@ def run_preflight(
             lambda: getattr(embedding, "request_count", 0),
         ))
 
-    if reranker is None and (
+    if not include_reranker:
+        pass
+    elif reranker is None and (
         not settings.ask_reranker_api_key
         or not settings.ask_reranker_model
         or not _url_has_path(settings.ask_reranker_base_url, "/compatible-api/v1")

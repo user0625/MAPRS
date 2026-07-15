@@ -115,6 +115,18 @@ def test_bm25_section_filter_and_no_answer(tmp_path):
     assert result.diagnostics.vector_enabled is False
 
 
+def test_bm25_min_score_is_applied_in_the_production_service(tmp_path):
+    state = tmp_path / "state.json"
+    write_state(state, [{"chunk_id": "weak", "text": "single target"}])
+    baseline = AskPaperRetrievalService(settings()).retrieve("baseline", str(state), "target")
+    score = baseline.diagnostics.bm25_scores_raw[0]["score"]
+    filtered = AskPaperRetrievalService(
+        settings(ask_bm25_min_score=float(score) + 0.01)
+    ).retrieve("filtered", str(state), "target")
+    assert filtered.hits == []
+    assert filtered.diagnostics.bm25_candidates == 0
+
+
 def test_retrieval_combines_section_and_overlapping_page_range(tmp_path):
     state = tmp_path / "state.json"
     write_state(state, [

@@ -175,3 +175,37 @@ export interface ComparisonEvidence {
   comparison_id:string; evidence_id:string; source_task_id:string; paper_id:string|null; paper_title:string
   chunk_id:string; page_start:number|null; page_end:number|null; section:string|null; text:string; score:number|null
 }
+
+export interface EvaluationMetrics {
+  candidate_recall_at_20:number; recall_at_6:number; precision_at_6:number; mrr:number
+  evidence_coverage:number; evidence_f1:number; unanswerable_refusal_rate:number
+  answerable_false_refusal_rate:number; answer_token_f1:number; citation_validity_rate:number
+  evidence_support_rate:number; latency_p50_ms:number; latency_p95_ms:number; estimated_cost_usd:number
+  degradation_rate?:number
+  answerability_threshold_refusal_rate?:number; evidence_filter_empty_rate?:number
+  unanswerable_answerability_refusal_rate?:number; unanswerable_evidence_empty_refusal_rate?:number
+  answerable_answerability_false_refusal_rate?:number; answerable_evidence_empty_false_refusal_rate?:number
+}
+export interface EvaluationScenario {
+  scenario:string; effective_modes:string[]; case_count:number; metrics:EvaluationMetrics
+  answer_quality_by_type:Record<string,{count:number;token_f1:number}>
+  degraded_reasons:string[]; failure_case_ids:string[]
+}
+export interface EvaluationReport {
+  schema_version:'public-paper-benchmark-v1'|'public-paper-benchmark-v2'; benchmark:string; result_status:string
+  dataset_adapter_version:string; dataset_version?:string; source_sha256?:string; adapted_sha256?:string
+  split:'train'|'validation'|'test'; generated_at:string
+  scope:{evaluates:string[];does_not_evaluate:string[];answer_baseline:string}
+  paper_count:number; dataset_paper_count?:number; evaluated_paper_count?:number
+  case_count:number; exclusions:Record<string,number>
+  configuration:Record<string,string|number|null>; scenarios:EvaluationScenario[]
+  run_level?:'pilot'|'validation'; run_version?:string
+  quality_gate?:{passed:boolean;failures:string[]}
+  quality_gates?:Record<'retrieval'|'reranker'|'refusal',{name:string;passed:boolean;failures:string[]}>
+  validation_authorized?:boolean; validation_scope?:'retrieval_only'|null
+  production_recommendation?:{
+    embedding:'candidate_default'|'candidate_for_validation'|'keep_current';reranker:'shadow'|'disabled'
+    shadow_exit?:{minimum_requests:number;minimum_days:number}
+  }
+  request_counts?:{embedding_batches:number;rerank_requests:number}
+}

@@ -348,6 +348,11 @@ class AskPaperRetrievalService:
             state_content_sha256(state),
             chunks,
         )
+        # Build/load timings belong to the request that actually performed the
+        # action.  The cached index keeps its provenance, but a process-local
+        # memory hit must not report the original cost again.
+        request_index_build_ms = 0.0 if memory_hit else full_index.index_build_ms
+        request_index_load_ms = 0.0 if memory_hit else full_index.index_load_ms
         positions = [
             position
             for position, chunk in enumerate(chunks)
@@ -363,6 +368,10 @@ class AskPaperRetrievalService:
         lexical = self.bm25(
             index, query, candidate_count, self.settings.ask_bm25_k1, self.settings.ask_bm25_b
         )
+        lexical = [
+            (position, score) for position, score in lexical
+            if score >= self.settings.ask_bm25_min_score
+        ]
         semantic_raw: list[tuple[int, float]] = []
         if index.vectors is not None:
             try:
@@ -480,8 +489,8 @@ class AskPaperRetrievalService:
             answerable=answerable, evidence_threshold=self.settings.ask_evidence_threshold,
             answerability_threshold=self.settings.ask_answerability_threshold,
             calibration_version=self.settings.ask_calibration_version,
-            index_build_ms=index.index_build_ms,
-            index_load_ms=index.index_load_ms,
+            index_build_ms=request_index_build_ms,
+            index_load_ms=request_index_load_ms,
             index_cache_hit=index.persistent_cache_hit,
             index_memory_cache_hit=memory_hit,
             index_cold_build_failed=index.cold_build_failed,
@@ -518,6 +527,7 @@ def get_retrieval_service(settings: AppSettings) -> AskPaperRetrievalService:
         settings.ask_evidence_count,
         settings.ask_bm25_k1,
         settings.ask_bm25_b,
+        settings.ask_bm25_min_score,
         settings.ask_rrf_k,
         settings.ask_vector_min_similarity,
         settings.ask_retrieval_cache_size,

@@ -64,3 +64,13 @@ def test_preflight_success_and_redacted_failure_payload():
     assert failed["checks"][0]["configuration"] == [
         "EMBEDDING_API_KEY", "EMBEDDING_BASE_URL", "EMBEDDING_MODEL"
     ]
+
+
+def test_retrieval_only_preflight_does_not_call_reranker():
+    result = run_preflight(
+        settings(), embedder=Embedder(),
+        reranker=Reranker(error=AssertionError("reranker must remain disabled")),
+        include_reranker=False,
+    )
+    assert result["ok"] is True
+    assert [check["service"] for check in result["checks"]] == ["embedding"]

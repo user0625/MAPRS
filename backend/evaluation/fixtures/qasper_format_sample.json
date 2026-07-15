@@ -1,0 +1,68 @@
+{
+  "paper-alpha": {
+    "title": "A Small QASPER Fixture",
+    "full_text": [
+      {
+        "section_name": "Introduction",
+        "paragraphs": [
+          "The method combines lexical and vector retrieval.",
+          "This paragraph is duplicated."
+        ]
+      },
+      {
+        "section_name": "Results",
+        "paragraphs": [
+          "This paragraph is duplicated.",
+          "The system reaches ninety percent recall."
+        ]
+      }
+    ],
+    "qas": [
+      {
+        "question_id": "q-answerable",
+        "question": "What does the method combine?",
+        "answers": [
+          {"annotation_id": "a1", "answer": {"unanswerable": false, "extractive_spans": ["lexical and vector retrieval"], "free_form_answer": "", "yes_no": null, "evidence": ["The method combines lexical and vector retrieval."]}},
+          {"annotation_id": "a2", "answer": {"unanswerable": false, "extractive_spans": [], "free_form_answer": "Lexical and vector retrieval.", "yes_no": null, "evidence": ["The method combines lexical and vector retrieval."]}}
+        ]
+      },
+      {
+        "question_id": "q-unanswerable",
+        "question": "Which GPU was used?",
+        "answers": [
+          {"answer": {"unanswerable": true, "extractive_spans": [], "free_form_answer": "", "yes_no": null, "evidence": []}},
+          {"answer": {"unanswerable": true, "extractive_spans": [], "free_form_answer": "", "yes_no": null, "evidence": []}}
+        ]
+      },
+      {
+        "question_id": "q-float",
+        "question": "What is shown in the figure?",
+        "answers": [
+          {"answer": {"unanswerable": false, "extractive_spans": ["figure"], "free_form_answer": "", "yes_no": null, "evidence": ["FLOAT SELECTED: Figure 1"]}}
+        ]
+      },
+      {
+        "question_id": "q-disagreement",
+        "question": "Is the answer disputed?",
+        "answers": [
+          {"answer": {"unanswerable": true, "extractive_spans": [], "free_form_answer": "", "yes_no": null, "evidence": []}},
+          {"answer": {"unanswerable": false, "extractive_spans": [], "free_form_answer": "yes", "yes_no": null, "evidence": ["The system reaches ninety percent recall."]}}
+        ]
+      },
+      {
+        "question_id": "q-ambiguous-duplicate",
+        "question": "Which duplicate is evidence?",
+        "answers": [
+          {"answer": {"unanswerable": false, "extractive_spans": ["duplicated"], "free_form_answer": "", "yes_no": null, "evidence": ["This paragraph is duplicated."]}}
+        ]
+      },
+      {
+        "question_id": "q-resolved-duplicate",
+        "question": "Are both repeated paragraphs selected?",
+        "answers": [
+          {"answer": {"unanswerable": false, "extractive_spans": [], "free_form_answer": "Both copies are selected.", "yes_no": null, "evidence": ["This paragraph is duplicated.", "This paragraph is duplicated."]}}
+        ]
+      }
+    ]
+  }
+}

@@ -11,6 +11,7 @@ import type {
   Conversation, ConversationDetail, AskAccepted, AskLanguage,
   ComparisonResponse, ComparisonListResponse, ComparisonStructuredReport, ComparisonEvidence,
   DocumentSearchRequest, DocumentSearchResponse,
+  EvaluationReport,
 } from '../types/api'
 
 const DEFAULT_API_BASE_URL = ''
@@ -169,3 +170,7 @@ export function getComparisonStructured(id:string):Promise<ComparisonStructuredR
 export function getComparisonEvidence(id:string,evidenceId:string):Promise<ComparisonEvidence> { return requestJson(`${API_BASE_URL}/api/comparisons/${id}/evidence/${encodeURIComponent(evidenceId)}`) }
 export function comparisonArtifactUrl(id:string,format:'markdown'|'json'|'html'|'pdf'|'docx'):string { return `${API_BASE_URL}/api/comparisons/${id}/artifacts/${format}` }
 export function comparisonEventsUrl(id:string,after=0):string { return `${API_BASE_URL}/api/comparisons/${id}/events?after=${after}` }
+
+export function getEvaluationReport():Promise<EvaluationReport> {
+  return requestJson(`${API_BASE_URL}/api/evaluation/report`)
+}

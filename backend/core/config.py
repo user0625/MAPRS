@@ -53,6 +53,7 @@ class AppSettings(BaseSettings):
     output_dir: Path = Path("backend/outputs")
     report_dir: Path = Path("backend/outputs/reports")
     log_dir: Path = Path("backend/outputs/logs")
+    evaluation_report_dir: Path = Path("backend/evaluation/results")
     database_url: str = "sqlite:///backend/data/tasks.db"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
@@ -64,6 +65,7 @@ class AppSettings(BaseSettings):
     ask_evidence_count: int = Field(default=6, ge=1, le=50)
     ask_bm25_k1: float = Field(default=1.5, gt=0, le=10)
     ask_bm25_b: float = Field(default=0.75, ge=0, le=1)
+    ask_bm25_min_score: float = Field(default=0.0, ge=0.0)
     ask_rrf_k: int = Field(default=60, ge=1, le=1000)
     ask_vector_min_similarity: float = Field(default=0.0, ge=-1.0, le=1.0)
     ask_reranker_mode: Literal["disabled", "shadow", "enabled"] = "disabled"
@@ -123,6 +125,7 @@ class AppSettings(BaseSettings):
         "output_dir",
         "report_dir",
         "log_dir",
+        "evaluation_report_dir",
         "ask_index_dir",
         mode="before",
     )
@@ -168,6 +171,7 @@ class AppSettings(BaseSettings):
             self.output_dir,
             self.report_dir,
             self.log_dir,
+            self.evaluation_report_dir,
             self.ask_index_dir,
         ]:
             self.resolve_path(directory).mkdir(parents=True, exist_ok=True)

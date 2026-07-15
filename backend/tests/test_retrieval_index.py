@@ -50,7 +50,15 @@ def test_persistent_index_survives_restart_and_contains_no_body(tmp_path):
     settings = configured(tmp_path)
     state = state_file(tmp_path)
     first = CountingEmbedder()
-    AskPaperRetrievalService(settings, embedder=first).retrieve("task", str(state), "alpha", "A")
+    service = AskPaperRetrievalService(settings, embedder=first)
+    cold = service.retrieve("task", str(state), "alpha", "A")
+    assert cold.diagnostics.index_build_ms > 0
+    assert cold.diagnostics.index_load_ms == 0
+    assert cold.diagnostics.index_memory_cache_hit is False
+    memory = service.retrieve("task", str(state), "alpha", "A")
+    assert memory.diagnostics.index_build_ms == 0
+    assert memory.diagnostics.index_load_ms == 0
+    assert memory.diagnostics.index_memory_cache_hit is True
     persisted = index_path(settings, "task")
     assert persisted.is_file()
     payload = persisted.read_text(encoding="utf-8")
@@ -62,6 +70,9 @@ def test_persistent_index_survives_restart_and_contains_no_body(tmp_path):
         "task", str(state), "alpha", "A"
     )
     assert result.diagnostics.index_cache_hit is True
+    assert result.diagnostics.index_build_ms == 0
+    assert result.diagnostics.index_load_ms > 0
+    assert result.diagnostics.index_memory_cache_hit is False
     assert second.calls == 1  # query only; document vectors came from disk
 
 
