@@ -91,7 +91,10 @@ test.beforeEach(async ({ page }) => {
   const response = await page.goto('/')
   expect(response?.ok(), `Failed to load ${page.url()}`).toBeTruthy()
   await expect(page.locator('#root'), `Browser errors: ${browserErrors.join(' | ')}`).not.toBeEmpty()
-  await page.getByRole('button', { name: 'Ask Paper' }).click({ timeout: 5_000 })
+  const askPaperTab = page.getByRole('button', { name: 'Ask Paper' })
+  await expect(askPaperTab).toBeVisible()
+  await askPaperTab.click()
+  await expect(askPaperTab).toHaveClass(/active/)
 })
 
 test('complete grounded question flow survives refresh and opens report', async ({ page }) => {
