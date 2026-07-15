@@ -293,6 +293,7 @@ git diff --check
 ```
 
 Mock 模式是默认测试路径。真实模型 smoke test 只有在显式设置 `RUN_REAL_LLM_TESTS=1` 且提供有效配置时才运行。
+公开克隆会另外跳过依赖本地私有 Pilot 或官方 QASPER 原始数据的 3 项测试；这些数据不随仓库发布。
 
 ## 文档索引
 

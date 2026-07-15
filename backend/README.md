@@ -201,7 +201,7 @@ uv run python -m backend.evaluation.ask_paper \
   --output backend/outputs/logs/ask-paper-eval.json
 ```
 
-真实模型测试默认跳过；只有 `RUN_REAL_LLM_TESTS=1` 时才会执行。默认全量回归已包含 `backend/tests/test_api_tasks.py`，不再使用 API 测试忽略参数。
+真实模型测试默认跳过；只有 `RUN_REAL_LLM_TESTS=1` 时才会执行。公开克隆还会明确跳过需要本地私有 Pilot 或官方 QASPER 原始数据的 3 项测试。默认全量回归已包含 `backend/tests/test_api_tasks.py`，不再使用 API 测试忽略参数。
 
 仓库级交付检查还包括：
 
