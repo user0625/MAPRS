@@ -92,6 +92,7 @@ class AppSettings(BaseSettings):
     default_top_k: int = Field(default=5, ge=1, le=50)
     chunk_size: int = Field(default=1200, ge=100)
     chunk_overlap: int = Field(default=150, ge=0)
+    pdf_layout_mode: Literal["auto", "legacy"] = "auto"
 
     # External request policy
     request_connect_timeout: float = Field(default=10.0, gt=0, le=300)

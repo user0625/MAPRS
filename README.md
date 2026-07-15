@@ -14,6 +14,14 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读场景的全栈
 
 ## 📝 最近更新
 
+- `2026-07-15`
+  - 版面感知 PDF 解析 MVP：默认 `PDF_LAYOUT_MODE=auto`，基于 PyMuPDF block、字体与 bbox 恢复常见单栏/双栏阅读顺序；跨栏 block 作为垂直分隔，双栏区段按左栏再右栏输出。
+  - 文本清理：识别覆盖至少 30% 且出现于至少 3 页的重复页眉、页脚和变化页码；仅在同一 block 内修复拉丁文行末断词，block 之间保留段落边界。
+  - 坐标与追踪：新增稳定 `PaperTextBlock`、页面宽高、bbox、类型、阅读顺序和页内字符范围；chunk metadata 保存相交 block ID、类型及 `pymupdf-layout-v1`，为后续 PDF 高亮保留精简坐标基础。
+  - 兼容与降级：单页版面异常只回退该页的 legacy 文本提取，空页不尝试 OCR；旧 state 可直接加载，`PDF_LAYOUT_MODE=legacy` 保留原纯文本行为，历史任务不会自动重处理。
+  - 可观察性与演示：AnalysisState、任务 metadata 和 Task History 展示解析页、fallback、单双栏、保留 block、边缘过滤及断词修复统计；新增无版权的确定性双栏 PDF 生成脚本。
+  - 范围边界：本期不包含 OCR、PDF viewer/高亮跳转、三栏专项、表格单元格重建、公式语义理解或图片内容识别。
+  - 验证：后端 `204 passed, 6 skipped`，Ruff 通过；前端 Vitest `18 passed`、Oxlint、build 和 Playwright 桌面/移动端通过；Compose 配置、API/Worker/Frontend 三镜像构建和 whitespace 检查通过。
 - `2026-07-14`
   - Search Document MVP：新增 `POST /api/tasks/{task_id}/search` 和独立前端工作区，支持 Auto/BM25、章节、1-based 页码闭区间、Top-K、稳定排序、分数与命中来源解释。
   - 搜索上下文与联动：命中片段围绕查询词截取，passage drawer 展示同章节且不越页码边界的直接相邻 chunk；可复制上下文，并将论文与查询预填到 Ask Paper（不自动发送、不创建伪 Evidence ID）。
@@ -65,7 +73,7 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读场景的全栈
 
 | 模块 | 状态 | 当前能力 |
 | :--- | :---: | :--- |
-| PDF 解析与分块 | ✅ 已完成 | 文本型 PDF、版面元数据候选、章节识别、页码和稳定分块 ID |
+| PDF 解析与分块 | ✅ 版面感知 MVP | 文本型 PDF、单/双栏顺序、页眉页脚过滤、断词修复、block 坐标追踪、逐页 fallback 和稳定分块 ID |
 | 多 Agent 分析 | ✅ 已完成 | Planner、Reader、Critic、Writer 串行协作 |
 | 文档检索/RAG | ✅ 搜索 MVP 完成 | Search Document、BM25 + 向量 + RRF、持久索引、范围过滤、相邻上下文、分数解释与安全降级 |
 | 结构化报告 | ✅ 已完成 | 中英文 Markdown、Schema 校验、状态 JSON |
@@ -86,7 +94,7 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读场景的全栈
 ## ✨ 项目亮点
 
 - 🤖 **多 Agent 协作**：Planner、Reader、Critic、Writer 分别负责规划、忠实提取、批判分析和报告撰写。
-- 📄 **论文处理流水线**：基于 PyMuPDF 提取文本和页码，按可配置窗口切分为稳定的论文分块。
+- 📄 **版面感知论文处理**：基于 PyMuPDF 的 block、字体与坐标恢复常见单栏/双栏阅读顺序，过滤重复页眉页脚并修复拉丁文断词，再生成可追踪来源 block 的稳定论文分块。
 - 🔎 **可降级混合检索**：通过 BM25、Embedding、RRF 和持久向量索引提供可引用证据；真实向量服务不可用时仍可使用 BM25。
 - 🔍 **即时文档搜索**：已完成论文可按章节、页码和 Top-K 搜索原文，查看来源分数与相邻上下文，再无缝转入 Ask Paper。
 - 🧩 **结构化输出**：所有 Agent 输入输出均使用 Pydantic Schema，减少自由文本在工作流中的不确定性。
@@ -190,6 +198,12 @@ uv run python -m backend.evaluation.ask_paper \
 报告包含 candidate Recall@20、macro Precision@6、Recall@6、MRR、Evidence coverage、拒答率、错误拒答率、平均返回数和延迟，并按语言、可回答性、章节约束及干扰类型分组。合成集用于 CI 回归；正式 validation/test 流程作为生产化扩展保留，不阻塞当前项目的离线演示与功能闭环。完整限制和指标口径见 [Ask Paper 离线质量评估文档](backend/evaluation/README.md)。
 
 ### Docker Compose（推荐）
+
+可先生成仓库自带的确定性双栏演示 PDF；它不包含外部论文内容，专门用于观察跨栏顺序、页眉页脚过滤、图注和断词修复：
+
+```bash
+uv run python -m backend.scripts.generate_layout_demo_pdf
+```
 
 安装 Docker 与 Compose 后，在仓库根目录运行：
 
@@ -324,6 +338,7 @@ LLM 和 Embedding 可以独立配置。例如可以使用真实 LLM 配合 Mock 
 | `DEFAULT_TOP_K` | `5` | 每个检索问题返回的证据数量 |
 | `CHUNK_SIZE` | `1200` | 文本分块目标字符数 |
 | `CHUNK_OVERLAP` | `150` | 相邻分块重叠字符数 |
+| `PDF_LAYOUT_MODE` | `auto` | `auto` 启用离线版面感知解析；`legacy` 保留 PyMuPDF 纯文本顺序 |
 | `OUTPUT_DIR` | `backend/outputs` | 运行产物根目录 |
 | `REPORT_DIR` | `backend/outputs/reports` | Markdown 报告目录 |
 | `LOG_DIR` | `backend/outputs/logs` | AnalysisState JSON 目录 |

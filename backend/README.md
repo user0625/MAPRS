@@ -19,9 +19,17 @@ Multi-Agent Paper Reader System 是一个面向科研论文阅读的多智能体
 
 当前项目用于功能展示，重点是形成清晰、可测试、可扩展的端到端 Agent 工作流和完整产品闭环，而不是提供生产级论文管理平台。任务内文档搜索 API 与前端搜索体验已经完成，详见 [`docs/document-retrieval-enhancement.md`](../docs/document-retrieval-enhancement.md)。
 
+### Layout-aware PDF parsing
+
+`PDF_LAYOUT_MODE=auto` 默认使用 PyMuPDF 的水平文本 block、字体和 bbox 恢复常见单栏与双栏阅读顺序，并过滤跨页重复的页眉、页脚和页码。最终页面文本由排序后的 block 组成；`PaperTextBlock` 保存页面 point 坐标、阅读顺序、类型和页内字符范围，chunk metadata 只引用相交 block ID 与类型，不重复保存 bbox。
+
+任一页面缺少有效水平文本、block 数据损坏或排序异常时，只回退该页的 `get_text("text")`；空文本页保持为空，不调用 OCR。设置 `PDF_LAYOUT_MODE=legacy` 可完全使用原纯文本提取路径。旧 state 的新增字段均有默认值，历史任务不会自动重解析。
+
+当前范围面向常见单栏与双栏文本型科研 PDF，不包含 OCR、PDF viewer/高亮跳转、三栏专项、表格单元格重建、公式语义理解或图片内容识别。任务详情中的 `document_parsing` 会汇总 layout/fallback 页、单双栏页、保留 block、边缘过滤和断词修复数量。
+
 ## 2. Key Features
 
-- 解析本地文本型 PDF，并保留页码信息。
+- 解析本地文本型 PDF，以 block 坐标恢复常见双栏顺序、过滤重复页眉页脚、修复拉丁文断词，并保留页码和精简坐标信息。
 - 按可配置长度和重叠区间切分论文文本。
 - 使用 BM25、embedding、RRF 和 `ask-retrieval-index-v1` 持久索引构建可降级的轻量 RAG 流程。
 - 通过 Planner、Reader、Critic、Writer 四个 Agent 分工完成论文分析。
@@ -68,6 +76,12 @@ flowchart TD
 核心模块之间通过 Schema 传递数据：`PaperDocument` 保存解析后的论文，`AnalysisPlan` 定义任务计划，`EvidenceBundle` 保存检索证据，`ReaderNotes` 和 `CriticNotes` 保存中间分析，`FinalReport` 表示最终报告。
 
 ## 4. Workflow
+
+离线生成双栏解析演示 PDF：
+
+```bash
+uv run python -m backend.scripts.generate_layout_demo_pdf
+```
 
 1. `PDFLoader` 从本地 PDF 提取逐页文本和基础元数据。
 2. `DocumentChunker` 生成带页码和稳定 ID 的文本分块。
@@ -182,6 +196,7 @@ LLM 与 embedding 可以独立配置。例如使用 DeepSeek LLM 时，可以继
 | `DEFAULT_TOP_K` | `5` | 默认检索结果数量 |
 | `CHUNK_SIZE` | `1200` | 单个文本分块的目标字符数 |
 | `CHUNK_OVERLAP` | `150` | 相邻分块的重叠字符数 |
+| `PDF_LAYOUT_MODE` | `auto` | `auto` 启用版面解析；`legacy` 使用原始纯文本提取 |
 | `DATABASE_URL` | `sqlite:///backend/data/tasks.db` | 任务历史 SQLite 数据库 |
 | `REQUEST_CONNECT_TIMEOUT` / `REQUEST_READ_TIMEOUT` | `10` / `60` | 外部请求连接与读取超时（秒） |
 | `REQUEST_TOTAL_BUDGET` | `120` | 单次任务请求重试总预算（秒） |

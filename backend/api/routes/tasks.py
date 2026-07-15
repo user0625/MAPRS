@@ -712,6 +712,7 @@ def run_analysis_task(
                 "paper_sections": state.metadata.get("paper_sections", []),
                 "report_configuration": state.metadata.get("report_configuration", {}),
                 "quality_evaluation": state.metadata.get("quality_evaluation", {}),
+                "document_parsing": state.metadata.get("document_parsing", {}),
                 "artifact_formats": ["markdown", "json", "html", "pdf", "docx"],
                 "ask_retrieval_index": index_metadata,
             },

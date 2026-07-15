@@ -119,6 +119,13 @@ main { width: min(1220px, calc(100% - 48px)); margin: 0 auto; flex: 1; }
 .detail-fields .wide { grid-column: 1 / -1; }
 .detail-fields dt { margin-bottom: 5px; color: #8a958f; font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .detail-fields dd { margin: 0; overflow-wrap: anywhere; color: #405048; font-size: 12px; line-height: 1.55; }
+.document-parsing { margin-top: 20px; padding: 15px 17px; border: 1px solid #dfe8e1; border-radius: 11px; background: #f5f8f5; }
+.document-parsing > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.document-parsing h3 { margin: 0; color: #30443a; font-size: 14px; }
+.document-parsing small { color: #829087; font-size: 10px; }
+.document-parsing dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px 16px; margin: 13px 0 0; }
+.document-parsing dt { color: #87938c; font-size: 9px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.document-parsing dd { margin: 3px 0 0; color: #375043; font-size: 11px; }
 .history-lower { display: grid; gap: 18px; }
 .collapsible-card { overflow: hidden; }
 .collapsible-card summary { padding: 22px 28px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; user-select: none; }
@@ -196,6 +203,7 @@ footer { width: min(1220px, calc(100% - 48px)); margin: auto auto 0; padding: 24
   .markdown-body { padding: 16px 22px 30px; }
   .detail-fields { grid-template-columns: 1fr; gap: 14px; }
   .detail-fields .wide { grid-column: auto; }
+  .document-parsing dl { grid-template-columns: 1fr 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

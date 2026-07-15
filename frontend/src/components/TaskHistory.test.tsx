@@ -24,8 +24,19 @@ beforeEach(() => {
   mocks.getTaskDetail.mockResolvedValue({
     ...task, paper_authors: [], report_markdown: '# report', report_available: true,
     state_available: true, workflow_status: 'completed', workflow_created_at: now,
-    workflow_updated_at: now, workflow_completed_at: now, workflow_metadata: {}, step_history: [],
+    workflow_updated_at: now, workflow_completed_at: now, workflow_metadata: {
+      document_parsing: { mode: 'auto', layout_version: 'pymupdf-layout-v1', layout_pages: 3,
+        fallback_pages: 0, single_column_pages: 0, double_column_pages: 3,
+        blocks_retained: 18, header_footer_blocks_removed: 9, dehyphenations: 3 },
+    }, step_history: [],
   })
+})
+
+it('shows compact document parsing diagnostics', async () => {
+  render(<TaskHistory refreshToken={0} />)
+  expect(await screen.findByRole('heading', { name: 'Document parsing' })).toBeInTheDocument()
+  expect(screen.getByText('0 single · 3 double')).toBeInTheDocument()
+  expect(screen.getByText('18')).toBeInTheDocument()
 })
 
 it('opens a completed task in document search', async () => {

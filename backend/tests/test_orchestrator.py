@@ -61,6 +61,8 @@ def test_orchestrator_runs_full_mock_workflow():
     assert state.final_report is not None
     assert state.final_report.to_markdown()
     assert len(state.step_history) > 0
+    assert state.metadata["document_parsing"]["mode"] == "auto"
+    assert "blocks_retained" in state.metadata["document_parsing"]
 
 def test_create_default_orchestrator_with_mock_settings(tmp_path):
   settings = AppSettings(
@@ -76,3 +78,4 @@ def test_create_default_orchestrator_with_mock_settings(tmp_path):
   orchestrator = create_default_orchestrator(settings)
 
   assert isinstance(orchestrator, PaperAnalysisOrchestrator)
+  assert orchestrator.pdf_loader.layout_mode == "auto"

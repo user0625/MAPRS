@@ -48,3 +48,13 @@ def test_create_paper_chunk():
 
     assert chunk.chunk_id == "page_1_chunk_1"
     assert chunk.page_start == 1
+
+
+def test_old_paper_page_state_loads_with_layout_defaults():
+    page = PaperPage.model_validate({"page_number": 1, "text": "Legacy state text"})
+
+    assert page.width is None
+    assert page.height is None
+    assert page.blocks == []
+    assert page.extraction_method == "legacy"
+    assert page.layout_metadata == {}

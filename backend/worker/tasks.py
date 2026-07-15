@@ -110,6 +110,7 @@ def execute_analysis(task_id: str, resume: bool = False) -> None:
                 else 0,
                 "num_report_sections": len(state.final_report.sections),
                 "quality_evaluation": state.metadata.get("quality_evaluation", {}),
+                "document_parsing": state.metadata.get("document_parsing", {}),
                 "artifact_formats": ["markdown", "json", "html", "pdf", "docx"],
                 "ask_retrieval_index": index_metadata,
             },

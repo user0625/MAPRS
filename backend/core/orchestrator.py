@@ -162,6 +162,9 @@ class PaperAnalysisOrchestrator:
     }
     state.metadata["paper_sections"] = [section.model_dump(mode="json", exclude={"text"})
                                          for section in document.sections]
+    state.metadata["document_parsing"] = self.pdf_loader.summarize_pages(
+      document.pages, self.pdf_loader.layout_mode,
+    )
     depth = state.metadata.get("report_configuration", {}).get("analysis_depth", "standard")
     settings = AppSettings()
     state.metadata["hierarchical_analysis"] = bool(
@@ -176,6 +179,7 @@ class PaperAnalysisOrchestrator:
         "paper_id": document.metadata.paper_id,
         "total_pages": document.metadata.total_pages,
         "num_pages": len(document.pages),
+        "document_parsing": state.metadata["document_parsing"],
       },
     )
 
@@ -549,7 +553,7 @@ def create_default_orchestrator(settings: AppSettings) -> PaperAnalysisOrchestra
   )
 
   orchestrator = PaperAnalysisOrchestrator(
-    pdf_loader=PDFLoader(),
+    pdf_loader=PDFLoader(layout_mode=settings.pdf_layout_mode),
     chunker=DocumentChunker(
       chunk_size=settings.chunk_size,
       chunk_overlap=settings.chunk_overlap,

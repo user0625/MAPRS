@@ -76,6 +76,10 @@ class DocumentChunker:
 
     for chunk_index, (char_start, char_end, chunk_text) in enumerate(spans, start=1):
       chunk_id = self._build_chunk_id(paper_id=paper_id, page_number=page.page_number, chunk_index=chunk_index)
+      source_blocks = [
+        block for block in page.blocks
+        if block.char_start < char_end and block.char_end > char_start
+      ]
       chunks.append(
         PaperChunk(
           chunk_id=chunk_id,
@@ -85,7 +89,16 @@ class DocumentChunker:
           page_end=page.page_number,
           section=section,
           char_start=char_start,
-          char_end=char_end
+          char_end=char_end,
+          metadata={
+            "layout_block_ids": list(dict.fromkeys(
+              block.block_id for block in source_blocks
+            )),
+            "layout_block_types": list(dict.fromkeys(
+              block.block_type for block in source_blocks
+            )),
+            "layout_version": page.layout_metadata.get("layout_version", "legacy"),
+          },
         )
       )
 

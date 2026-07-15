@@ -1,6 +1,6 @@
 from __future__ import annotations
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator  #数据验证
 
 
@@ -137,6 +137,37 @@ class PaperMetadata(BaseModel):
     return cleaned
   
 
+class PaperTextBlock(BaseModel):
+  """A positioned text block in the final page reading order."""
+
+  block_id: str = Field(..., min_length=1, description="Stable page-local block ID")
+  page_number: int = Field(..., ge=1)
+  bbox: tuple[float, float, float, float]
+  reading_order: int = Field(..., ge=0)
+  block_type: Literal["body", "heading", "caption", "other"] = "body"
+  rotation: int = 0
+  char_start: int = Field(..., ge=0, description="Page-local inclusive character offset")
+  char_end: int = Field(..., ge=0, description="Page-local exclusive character offset")
+  text: str = Field(..., min_length=1)
+
+  @field_validator("block_id", "text")
+  @classmethod
+  def strip_block_text(cls, value: str) -> str:
+    value = value.strip()
+    if not value:
+      raise ValueError("Field cannot be empty")
+    return value
+
+  @model_validator(mode="after")
+  def validate_block_ranges(self) -> "PaperTextBlock":
+    x0, y0, x1, y1 = self.bbox
+    if x1 < x0 or y1 < y0:
+      raise ValueError("block bbox must have non-negative width and height")
+    if self.char_end < self.char_start:
+      raise ValueError("block char_end must be greater than or equal to char_start")
+    return self
+
+
 class PaperPage(BaseModel):
   """
     Text extracted from one page of a paper
@@ -147,6 +178,11 @@ class PaperPage(BaseModel):
 
   page_number: int = Field(..., ge=1, description="1-based page number")
   text: str = Field(default="", description="从这页中提取文本")
+  width: float | None = Field(default=None, ge=0)
+  height: float | None = Field(default=None, ge=0)
+  blocks: list[PaperTextBlock] = Field(default_factory=list)
+  extraction_method: str = "legacy"
+  layout_metadata: dict[str, Any] = Field(default_factory=dict)
 
   @field_validator("text")
   @classmethod

@@ -74,6 +74,7 @@ export function TaskHistory({ refreshToken, onSearchDocument }: { refreshToken: 
   const authors = detail?.paper_authors?.length ? detail.paper_authors :
     (Array.isArray(detail?.metadata.paper_authors) ? detail.metadata.paper_authors.filter((author): author is string => typeof author === 'string') : [])
   const quality = (detail?.metadata.quality_evaluation || detail?.workflow_metadata.quality_evaluation || {}) as Record<string, unknown>
+  const documentParsing = (detail?.metadata.document_parsing || detail?.workflow_metadata.document_parsing || {}) as Record<string, unknown>
   const metadataQuality = (detail?.metadata.metadata_quality || detail?.workflow_metadata.metadata_quality || {}) as Record<string, { source?: string, confidence?: number }>
   const paperSections = (detail?.metadata.paper_sections || detail?.workflow_metadata.paper_sections || []) as Array<{ name?: string, page_start?: number, page_end?: number }>
 
@@ -120,6 +121,14 @@ export function TaskHistory({ refreshToken, onSearchDocument }: { refreshToken: 
             <div><dt>Created</dt><dd>{formatDate(detail.created_at)}</dd></div><div><dt>Updated</dt><dd>{formatDate(detail.updated_at)}</dd></div><div><dt>Completed</dt><dd>{formatDate(detail.completed_at)}</dd></div>
             <div><dt>Prompt set</dt><dd>{String(detail.workflow_metadata.prompt_set_version || detail.metadata.prompt_set_version || '—')}</dd></div><div><dt>Structured calls</dt><dd>{String((detail.workflow_metadata.structured_output_stats as Record<string, unknown> | undefined)?.total_calls || '—')}</dd></div>
           </dl>
+          {Object.keys(documentParsing).length > 0 && <div className="document-parsing"><div><h3>Document parsing</h3><small>{String(documentParsing.mode || 'auto')} · {String(documentParsing.layout_version || 'unknown')}</small></div><dl>
+            <div><dt>Layout pages</dt><dd>{String(documentParsing.layout_pages ?? 0)}</dd></div>
+            <div><dt>Fallback pages</dt><dd>{String(documentParsing.fallback_pages ?? 0)}</dd></div>
+            <div><dt>Columns</dt><dd>{String(documentParsing.single_column_pages ?? 0)} single · {String(documentParsing.double_column_pages ?? 0)} double</dd></div>
+            <div><dt>Blocks kept</dt><dd>{String(documentParsing.blocks_retained ?? 0)}</dd></div>
+            <div><dt>Margins removed</dt><dd>{String(documentParsing.header_footer_blocks_removed ?? 0)}</dd></div>
+            <div><dt>Words rejoined</dt><dd>{String(documentParsing.dehyphenations ?? 0)}</dd></div>
+          </dl></div>}
           {Object.keys(metadataQuality).length > 0 && <div className="phase-d-details"><h3>Metadata provenance</h3><ul>{Object.entries(metadataQuality).map(([name, field]) => <li key={name}><strong>{name}</strong>: {field.source || 'unidentified'} · {typeof field.confidence === 'number' ? `${Math.round(field.confidence * 100)}%` : '—'}</li>)}</ul></div>}
           {paperSections.length > 0 && <div className="phase-d-details"><h3>Detected sections</h3><ol>{paperSections.map((section, index) => <li key={`${section.name}-${index}`}>{section.name || 'Unidentified'} <small>pp. {section.page_start}–{section.page_end}</small></li>)}</ol></div>}
           {Object.keys(quality).length > 0 && <div className={`quality-card ${quality.passed ? 'passed' : 'warning'}`}><h3>Report quality · {String(quality.overall || 0)}/100</h3><div>{['accuracy','completeness','faithfulness','citation_validity','critical_depth'].map(key => <span key={key}>{key.replace('_', ' ')} <strong>{String(quality[key] ?? '—')}</strong></span>)}</div><p>Citation coverage: {typeof quality.citation_coverage === 'number' ? `${Math.round(quality.citation_coverage * 100)}%` : '—'} · Revisions: {String(quality.revision_count ?? 0)}</p></div>}
