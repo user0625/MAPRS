@@ -34,6 +34,7 @@ CHECKPOINT_SCHEMA = "qasper-real-checkpoint-v2"
 PILOT_QUOTAS = {"extractive": 45, "free_form": 20, "yes_no": 10, "unanswerable": 25}
 PILOT_CANDIDATE_COUNTS = (20, 30, 40)
 PILOT_EVIDENCE_COUNTS = (4, 6, 8)
+PILOT_CROSS_VALIDATION_FOLDS = 5
 EMBEDDING_REQUEST_LIMIT = 400
 RERANK_REQUEST_LIMIT = 120
 
@@ -163,6 +164,86 @@ def select_pilot_cases(
     # Group by paper to ensure a paper index is built/loaded only once per contiguous run.
     selected.sort(key=lambda case: (case.paper_id, case.case_id))
     return selected
+
+
+def _paper_disjoint_folds(
+    cases: Iterable[QasperCase],
+    *,
+    fold_count: int = PILOT_CROSS_VALIDATION_FOLDS,
+) -> list[list[QasperCase]]:
+    """Partition train cases into deterministic, answer-type-balanced paper folds."""
+    selected = list(cases)
+    if fold_count < 1:
+        raise ValueError("fold_count must be positive")
+    by_paper: dict[str, list[QasperCase]] = {}
+    for case in selected:
+        by_paper.setdefault(case.paper_id, []).append(case)
+    if not by_paper:
+        raise ValueError("paper-disjoint folds require at least one case")
+    actual_fold_count = min(fold_count, len(by_paper))
+    totals = Counter(case.answer_type for case in selected)
+    targets = {
+        answer_type: count / actual_fold_count
+        for answer_type, count in totals.items()
+    }
+    target_cases = len(selected) / actual_fold_count
+    groups = sorted(
+        (
+            sorted(group, key=lambda case: case.case_id)
+            for group in by_paper.values()
+        ),
+        key=lambda group: (
+            -len(group),
+            hashlib.sha256(
+                f"qasper-real-cross-fold-v1:{group[0].paper_id}".encode("utf-8")
+            ).hexdigest(),
+        ),
+    )
+    folds: list[list[QasperCase]] = [[] for _ in range(actual_fold_count)]
+    for index, group in enumerate(groups):
+        if index < actual_fold_count:
+            selected_fold = index
+        else:
+            added = Counter(case.answer_type for case in group)
+
+            def imbalance(fold_index: int) -> tuple[float, int, int]:
+                current = Counter(case.answer_type for case in folds[fold_index])
+                type_load = sum(
+                    ((current[answer_type] + added[answer_type]) / target) ** 2
+                    for answer_type, target in targets.items() if target
+                )
+                case_load = ((len(folds[fold_index]) + len(group)) / target_cases) ** 2
+                return type_load + case_load, len(folds[fold_index]), fold_index
+
+            selected_fold = min(range(actual_fold_count), key=imbalance)
+        folds[selected_fold].extend(group)
+    for fold in folds:
+        fold.sort(key=lambda case: (case.paper_id, case.case_id))
+    return folds
+
+
+def _cross_validation_metadata(folds: list[list[QasperCase]]) -> dict[str, Any]:
+    assignment = [
+        {"fold": fold_index, "paper_id": case.paper_id, "case_id": case.case_id}
+        for fold_index, fold in enumerate(folds)
+        for case in fold
+    ]
+    return {
+        "fold_count": len(folds),
+        "paper_disjoint": True,
+        "assignment_sha256": _canonical_sha(assignment),
+        "folds": [
+            {
+                "fold": fold_index,
+                "paper_count": len({case.paper_id for case in fold}),
+                "case_count": len(fold),
+                "answer_type_counts": dict(sorted(Counter(
+                    case.answer_type for case in fold
+                ).items())),
+            }
+            for fold_index, fold in enumerate(folds)
+        ],
+    }
 
 
 def _model_signature(settings: AppSettings) -> dict[str, Any]:
@@ -697,35 +778,105 @@ def _validation_proxy_gate(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-HybridCandidate = tuple[tuple[float, ...], dict[str, Any], dict[str, Any]]
+def _cross_fold_proxy_gate(reports: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    failures = [
+        f"fold_{fold_index}: {failure}"
+        for fold_index, report in enumerate(reports)
+        for failure in _validation_failures(report)
+    ]
+    return {
+        "name": "train_cross_validation_proxy",
+        "passed": not failures,
+        "failures": failures,
+    }
+
+
+def _worst_fold_metrics(reports: Iterable[dict[str, Any]]) -> dict[str, float]:
+    metrics = [report["metrics"] for report in reports]
+    if not metrics:
+        raise ValueError("cross-fold selection requires at least one fold report")
+    return {
+        "candidate_recall_at_20": min(item["candidate_recall_at_20"] for item in metrics),
+        "recall_at_6": min(item["recall_at_6"] for item in metrics),
+        "precision_at_6": min(item["precision_at_6"] for item in metrics),
+        "mrr": min(item["mrr"] for item in metrics),
+        "evidence_coverage": min(item["evidence_coverage"] for item in metrics),
+        "evidence_f1": min(item["evidence_f1"] for item in metrics),
+        "degradation_rate": max(item["degradation_rate"] for item in metrics),
+        "latency_p95_ms": max(item["latency_p95_ms"] for item in metrics),
+    }
+
+
+@dataclass(frozen=True)
+class HybridCandidate:
+    priority: tuple[float, ...]
+    report: dict[str, Any]
+    configuration: dict[str, Any]
+    fold_reports: tuple[dict[str, Any], ...]
+
+
+def _cross_fold_priority(candidate: HybridCandidate) -> tuple[float, ...]:
+    gate = _cross_fold_proxy_gate(candidate.fold_reports)
+    worst = _worst_fold_metrics(candidate.fold_reports)
+    return (
+        -len(gate["failures"]),
+        worst["candidate_recall_at_20"],
+        worst["recall_at_6"],
+        worst["precision_at_6"],
+        worst["mrr"],
+        worst["evidence_coverage"],
+        worst["evidence_f1"],
+        -worst["degradation_rate"],
+        -worst["latency_p95_ms"],
+        *candidate.priority,
+    )
 
 
 def _select_hybrid_candidate(
     candidates: list[HybridCandidate],
     bm25: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Prefer validation-ready metrics without weakening the Pilot retrieval gate."""
+    """Select for paper-disjoint train robustness without weakening Retrieval."""
     if not candidates:
         raise ValueError("pilot produced no Hybrid configurations")
     retrieval_qualified = [
-        item for item in candidates if _retrieval_gate(item[1], bm25)["passed"]
+        item for item in candidates if _retrieval_gate(item.report, bm25)["passed"]
     ]
     validation_proxy_qualified = [
-        item for item in retrieval_qualified if _validation_proxy_gate(item[1])["passed"]
+        item for item in retrieval_qualified
+        if _validation_proxy_gate(item.report)["passed"]
     ]
-    selection_pool = validation_proxy_qualified or retrieval_qualified or candidates
-    _, selected_report, selected_configuration = max(
-        selection_pool, key=lambda item: item[0]
+    cross_fold_proxy_qualified = [
+        item for item in retrieval_qualified
+        if _cross_fold_proxy_gate(item.fold_reports)["passed"]
+    ]
+    base_pool = retrieval_qualified or candidates
+    selection_pool = cross_fold_proxy_qualified or base_pool
+    selected = max(
+        selection_pool, key=_cross_fold_priority
     )
+    selected_cross_fold_gate = _cross_fold_proxy_gate(selected.fold_reports)
     selection = {
-        "strategy": "retrieval_gate_then_pilot_validation_proxy",
+        "strategy": "retrieval_gate_then_paper_disjoint_worst_fold",
         "retrieval_qualified_configuration_count": len(retrieval_qualified),
         "validation_proxy_qualified_configuration_count": len(
             validation_proxy_qualified
         ),
-        "selected_configuration_proxy_gate": _validation_proxy_gate(selected_report),
+        "cross_fold_validation_proxy_qualified_configuration_count": len(
+            cross_fold_proxy_qualified
+        ),
+        "cross_fold_fallback_used": not bool(cross_fold_proxy_qualified),
+        "selected_configuration_proxy_gate": _validation_proxy_gate(selected.report),
+        "selected_configuration_cross_fold_proxy_gate": selected_cross_fold_gate,
+        "selected_configuration_worst_fold_metrics": _worst_fold_metrics(
+            selected.fold_reports
+        ),
+        "selected_configuration_fold_metrics": [
+            {"fold": fold_index, "metrics": report["metrics"]}
+            for fold_index, report in enumerate(selected.fold_reports)
+        ],
     }
-    return selected_report, selected_configuration, selection
+    return selected.report, selected.configuration, selection
 
 
 def _public_configuration(settings: AppSettings, selected: dict[str, Any]) -> dict[str, Any]:
@@ -855,6 +1006,7 @@ def run_real_pilot(
         raise ValueError("real pilot output already exists")
     dataset = load_adapted(cache_dir, "train")
     cases = select_pilot_cases(dataset, quotas=quotas)
+    cross_validation_folds = _paper_disjoint_folds(cases)
     configured = (settings or get_settings()).model_copy(update={
         "ask_candidate_count": max(PILOT_CANDIDATE_COUNTS),
         "ask_evidence_count": max(PILOT_EVIDENCE_COUNTS),
@@ -877,6 +1029,14 @@ def run_real_pilot(
         cache_dir, dataset, cases, configured, checkpoint,
         embedder=embedder, reranker=reranker, service_factory=service_factory,
     )
+    rows_by_case = {
+        f"{row.paper_id}\x1f{row.case_id}": row
+        for row in rows
+    }
+    fold_rows = [
+        [rows_by_case[_case_key(case)] for case in fold]
+        for fold in cross_validation_folds
+    ]
     request_summary: dict[str, int | float] = {
         **requests,
         "index_build_ms": sum(row.index_build_ms for row in rows),
@@ -919,10 +1079,25 @@ def run_real_pilot(
                         vector_min_similarity=vector_threshold, rerank=False,
                     )
                     metric = hybrid["metrics"]
-                    hybrid_candidates.append(((
-                        metric["candidate_recall_at_20"], metric["recall_at_6"],
-                        metric["precision_at_6"], metric["mrr"],
-                    ), hybrid, {**common, "vector_min_similarity": vector_threshold}))
+                    fold_reports = tuple(
+                        {"metrics": replay_report(
+                            f"real-hybrid-fold-{fold_index}", fold, dataset,
+                            **common, vector_min_similarity=vector_threshold,
+                            rerank=False,
+                        )["metrics"]}
+                        for fold_index, fold in enumerate(fold_rows)
+                    )
+                    hybrid_candidates.append(HybridCandidate(
+                        priority=(
+                            metric["candidate_recall_at_20"], metric["recall_at_6"],
+                            metric["precision_at_6"], metric["mrr"],
+                        ),
+                        report=hybrid,
+                        configuration={
+                            **common, "vector_min_similarity": vector_threshold,
+                        },
+                        fold_reports=fold_reports,
+                    ))
     _, best_bm25, bm25_config = max(bm25_candidates, key=lambda item: item[0])
     best_hybrid, retrieval_config, hybrid_selection = _select_hybrid_candidate(
         hybrid_candidates, best_bm25
@@ -1034,6 +1209,9 @@ def run_real_pilot(
         },
         "bm25_configuration": bm25_config,
         "hybrid_selection": hybrid_selection,
+        "train_cross_validation": _cross_validation_metadata(
+            cross_validation_folds
+        ),
         "reranker_diagnostics": {
             "evaluated_configuration_count": len(reranked_candidates),
             "feasible_configuration_count": len(feasible),
@@ -1063,6 +1241,12 @@ def run_real_pilot(
             "offline_replay_only": True,
         },
         "validation_authorized": quality_gates["retrieval"]["passed"],
+        "validation_recommended": (
+            quality_gates["retrieval"]["passed"]
+            and hybrid_selection[
+                "selected_configuration_cross_fold_proxy_gate"
+            ]["passed"]
+        ),
         "validation_scope": (
             "retrieval_only" if quality_gates["retrieval"]["passed"] else None
         ),
@@ -1079,6 +1263,8 @@ def run_real_pilot(
             ).items())),
         },
     })
+    if not report["validation_recommended"]:
+        report["production_recommendation"]["embedding"] = "keep_current"
     _atomic_json(output, report)
     return report
 
@@ -1111,8 +1297,12 @@ def run_real_validation(
         or not pilot.get("validation_authorized")
         or pilot.get("validation_scope") != "retrieval_only"
         or not pilot.get("quality_gates", {}).get("retrieval", {}).get("passed")
+        or pilot.get("validation_recommended") is False
     ):
-        raise ValueError("real validation requires a retrieval-authorized train Pilot artifact")
+        raise ValueError(
+            "real validation requires a retrieval-authorized and "
+            "validation-recommended train Pilot artifact"
+        )
     data_signature = _dataset_signature(cache_dir)
     if pilot.get("data_signature") != data_signature:
         raise ValueError("Pilot dataset SHA does not match the imported QASPER cache")
@@ -1224,14 +1414,26 @@ def render_markdown(report: dict[str, Any]) -> str:
     ]
     if hybrid_selection:
         selected_proxy = hybrid_selection.get("selected_configuration_proxy_gate") or {}
+        selected_cross_fold_proxy = hybrid_selection.get(
+            "selected_configuration_cross_fold_proxy_gate"
+        ) or {}
         lines += [
             f"- Hybrid selection: `{hybrid_selection.get('strategy')}`",
             f"- Retrieval-qualified / validation-proxy-qualified configurations: "
             f"{hybrid_selection.get('retrieval_qualified_configuration_count', 0)} / "
             f"{hybrid_selection.get('validation_proxy_qualified_configuration_count', 0)}",
+            f"- All-fold validation-proxy-qualified configurations: "
+            f"{hybrid_selection.get('cross_fold_validation_proxy_qualified_configuration_count', 0)}",
             f"- Selected configuration validation proxy: "
             f"`{'passed' if selected_proxy.get('passed') else 'failed'}`",
+            f"- Selected configuration train cross-validation proxy: "
+            f"`{'passed' if selected_cross_fold_proxy.get('passed') else 'failed'}`",
         ]
+    if "validation_recommended" in report:
+        lines.append(
+            f"- Validation recommended: "
+            f"`{'yes' if report['validation_recommended'] else 'no'}`"
+        )
     lines += [
         "", "| Scenario | Cand. R@20 | R@6 | P@6 | MRR | Coverage | Evidence F1 | Refusal | False refusal | p95 ms |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
