@@ -266,6 +266,10 @@ def test_qasper_import_rejects_paper_level_split_leakage(tmp_path):
         _import(cache, raw, "validation")
 
 
+@pytest.mark.skipif(
+    not OFFICIAL_TRAIN.is_file(),
+    reason="Official QASPER train data is not included in the public repository.",
+)
 def test_official_train_pilot_quota_is_exact_and_paper_capped():
     dataset = adapt_qasper(json.loads(OFFICIAL_TRAIN.read_text(encoding="utf-8")), "train")
     assert len(dataset.papers) == 840

@@ -12,6 +12,10 @@ from backend.evaluation.real_dataset import Split, load_dataset
 
 TARGET = Path("backend/data/private_evaluation/target-v1")
 ADJUDICATION = TARGET / "expert_adjudication.jsonl"
+pytestmark = pytest.mark.skipif(
+    not TARGET.is_dir() or not ADJUDICATION.is_file(),
+    reason="Private pilot dataset is not included in the public repository.",
+)
 
 
 def test_pilot_view_is_read_only_and_never_allows_test():
