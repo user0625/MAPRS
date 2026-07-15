@@ -1,5 +1,84 @@
 # Ask Paper 离线质量评估
 
+## 公开 QASPER Benchmark
+
+公开基准入口是 `backend.evaluation.qasper_benchmark`。导入命令要求调用者提供官方文件的 SHA-256；原始数据与适配后的段落文本只进入 Git 忽略缓存。适配器保留官方论文级 train/validation/test 划分，只接受标注者可回答性一致、文本 Evidence 可完全且无歧义映射的样本，并排除 `FLOAT SELECTED` figure/table 样本。
+
+```bash
+uv run python -m backend.evaluation.qasper_benchmark import \
+  --source /data/qasper-dev-v0.3.json \
+  --cache backend/data/public_evaluation/qasper-v0.3 \
+  --split validation \
+  --sha256 <official-file-sha256>
+
+uv run python -m backend.evaluation.qasper_benchmark run \
+  --cache backend/data/public_evaluation/qasper-v0.3 \
+  --split validation \
+  --official-source \
+  --output backend/evaluation/results/qasper-validation-v0.3.json
+```
+
+test split 还必须传 `--final-config`，同一导入缓存只允许运行一次。报告采用 `public-paper-benchmark-v1`，包含 BM25、离线 Vector、BM25+Vector+RRF、RRF+Reranker、Embedding 降级和 Reranker 降级；失败明细只保存 case ID，不保存完整问题或正文。QASPER 没有可靠 PDF 页码，因此报告明确不覆盖 PDF 解析和页码准确性。仓库自带的 `results/qasper-format-fixture-v1.*` 只验证格式、CI 与 Evaluation 页面，状态为 `unverified_local_run`，不是公开真实质量结论。第三方归属见 [`THIRD_PARTY_QASPER.md`](THIRD_PARTY_QASPER.md)。
+
+### 真实 Embedding / Reranker 分阶段校准
+
+真实校准前必须分别导入官方 train 与 validation，并保留各自 SHA；不要导入 test。导入器同时生成 Git 忽略、内容寻址的轻量 state，chunk ID、section 和正文保持稳定，但不会伪造页码。train/validation 论文 ID 有交集、state 或 adapted SHA 变化都会使后续 artifact 失效。
+
+```bash
+uv run python -m backend.evaluation.qasper_benchmark import \
+  --source /data/qasper-train-v0.3.json \
+  --cache backend/data/public_evaluation/qasper-v0.3 \
+  --split train --sha256 <official-train-sha256>
+
+uv run python -m backend.evaluation.qasper_benchmark import \
+  --source /data/qasper-dev-v0.3.json \
+  --cache backend/data/public_evaluation/qasper-v0.3 \
+  --split validation --sha256 <official-validation-sha256>
+
+uv run python -m backend.evaluation.qasper_benchmark real-pilot \
+  --cache backend/data/public_evaluation/qasper-v0.3 \
+  --pilot-version qasper-real-pilot-tev3-v2 \
+  --output backend/outputs/evaluation/qasper-real-pilot-tev3-v2.json
+```
+
+`real-pilot` 会先执行各一个脱敏 Embedding/Reranker 合成 preflight，然后从 train 固定选择 100 题（45 extractive、20 free-form、10 yes/no、25 unanswerable，每篇最多 4 题）。每篇向量索引只构建或加载一次，每题只发起一次 query embedding 和 rerank；20/30/40 候选、4/6/8 Evidence 和阈值网格都从这次最大深度采集离线重放。Pilot 最多允许 400 个 embedding 批次和 120 次 rerank，评测 reranker timeout 为 10 秒。
+
+checkpoint schema 为 `qasper-real-checkpoint-v2`，保存原始 wall latency、本次请求实际发生的 build/load、查询延迟、持久/内存缓存状态、数值分数、请求数和失败类别，不含问题、正文、密钥或端点。`real-pilot` 和 `real-validation` 都可用 `--checkpoint` 显式恢复完全匹配的数据、模型、样本选择与配置；v1 checkpoint 只供审计，不得生成新的权威延迟结论。
+
+Pilot 有三条独立质量门：
+
+- Retrieval：Hybrid Candidate Recall@20 ≥85%、不低于 BM25、降级率 ≤1%、查询 p95 ≤3 秒；
+- Reranker：相对最佳 Hybrid 的 Precision@6 提升 ≥5pp，Recall@6 下降 ≤2pp；
+- Refusal：不可回答拒答率 ≥70%，可回答错误拒答率 ≤10%。
+
+三条都通过时总门禁才通过；仅 Retrieval 通过即可设置 `validation_authorized=true`、`validation_scope=retrieval_only`。Retrieval-only validation 固定复用 Pilot 的 Hybrid 配置，Reranker 保持 `disabled`，不会发起 706 次 rerank。其质量门为 Candidate Recall@20 ≥90%、Recall@6 ≥70%、Precision@6 ≥20%、MRR ≥0.55、Coverage ≥70%、Evidence F1 ≥30%、降级率 ≤1%、p95 ≤3 秒。
+
+### `qasper-real-pilot-tev3-v2` 真实结果（2026-07-15）
+
+本次使用 `text-embedding-v3` 与 `qwen3-rerank`，对 train 的 840 篇适配论文中固定抽取 26 篇、100 题。preflight 通过；采集使用 100 个 embedding batch、100 次 rerank，均未超过上限。持久向量全部命中：26 次磁盘加载、74 次内存命中，索引 build 为 0，总 load 为 234.595ms；build/load 互斥。Hybrid 查询 p50/p95 为 167.5/299.4ms，含 Reranker 为 511.2/646.5ms，降级率为 0。
+
+Retrieval 门通过：Hybrid Candidate Recall@20 为 98.95%，高于 BM25 的 85.65%；Recall@6 83.46%、Precision@6 17.33%、MRR 0.588、Coverage 78.67%、Evidence F1 27.49%。选定 Hybrid 配置为 candidate/evidence `20/6`、BM25 最低分 `6.1050431604`、向量最低相似度 `0.3569696024`、RRF k `60`。
+
+Reranker 与 Refusal 门失败，3267 组离线配置中可行配置数为 0，因此没有 selected Reranker configuration：
+
+- 召回保护方案 Recall@6 为 83.68%，但 Precision@6 20.22%，相对 Hybrid 只提升 2.89pp，未达到 5pp；
+- 精度优先方案 Precision@6 为 31.67%，但 Recall@6 降至 51.24%，下降 32.22pp；其不可回答拒答率为 60%，错误拒答率为 28%；
+- 报告将 answerability threshold 拒答与 Evidence 过滤后空结果分开统计；精度优先方案的拒答全部来自 answerability threshold，未发现 Evidence 过滤后空结果。
+
+结论是 `quality_gate.passed=false`，但 Retrieval 单轨已授权 `retrieval_only` validation。Embedding 推荐为 `candidate_for_validation`，Reranker 固定为 `disabled`。旧 `qasper-real-pilot-tev3-v1` 继续作为失败审计记录保留，其延迟字段不作为权威结论。本次尚未运行 validation、test 或人工评估，也未把 Embedding 切换为默认配置。
+
+授权后的 validation 命令如下，但只有在明确启动下一阶段时才执行：
+
+```bash
+uv run python -m backend.evaluation.qasper_benchmark real-validation \
+  --cache backend/data/public_evaluation/qasper-v0.3 \
+  --pilot backend/outputs/evaluation/qasper-real-pilot-tev3-v2.json \
+  --calibration-version qasper-real-retrieval-cal-tev3-v2 \
+  --output backend/outputs/evaluation/qasper-real-validation-tev3-v2.json
+```
+
+validation 会验证数据 manifest、模型和 Hybrid 配置 SHA，原样重放 Pilot 配置，不重新调参。通过后 Embedding 才推荐 `candidate_default`；Reranker 仍为 `disabled`。当前 CLI 没有真实 test 子命令，避免在配置冻结前访问 test。
+
 > 项目范围说明：本评估框架保留了生产化所需的严格边界。正式 gold、冻结 test 和生产 reranker 不作为文档检索增强 MVP 的前置条件；离线合成回归、显式降级和端到端演示完整性是当前优先级。
 
 ## Pilot-only 工程准入门
