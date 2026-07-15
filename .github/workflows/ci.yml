@@ -47,7 +47,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend
       - uses: docker/build-push-action@v6
         with:
-          context: frontend
+          context: .
           file: frontend/Dockerfile
           push: false
           tags: paper-reader-frontend:ci
