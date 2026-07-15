@@ -4,6 +4,14 @@ __pycache__/
 build/
 dist/
 test/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local configuration and credentials. Example templates remain public.
+.env
+.env.*
+!.env.example
 backend/.env
 backend/data/*
 !backend/data/raw/
@@ -19,11 +27,18 @@ backend/logs/
 backend/data/private_evaluation/
 backend/evaluation/private/
 backend/outputs/evaluation/
+backend/evaluation/results/qasper-validation-v0.3.*
+*.checkpoint.json
 # One-off target-v1 construction and QC scripts stay local with the private dataset.
 backend/scripts/*private_eval_target_v1*.py
 wheels/
 *.egg-info
 data_flow_processing_pipeline.png
 system_architecture_design.png
+/qasper/
+/*.txt
+*.db
+*.sqlite
+*.sqlite3
 # Virtual environments
 .venv
