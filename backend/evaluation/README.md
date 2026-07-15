@@ -102,6 +102,14 @@ Hybrid Precision@6 为 21.44%、降级率和延迟通过，但总门失败：Can
 
 诊断中仍有 8136 组配置通过 Retrieval、57 组通过全量 proxy，但全折 proxy 合格数为 0。确定性回退仍选中 v3 的 `20/4` 配置；最差折 Candidate Recall@20 为 97.06%、Recall@6 67.35%、Precision@6 19.64%、MRR 0.488、Coverage 52.94%、Evidence F1 30.48%。因此新报告会保留 `validation_authorized=true` 的正式 Retrieval 语义，但设置 `validation_recommended=false`、Embedding `keep_current`；本次不生成正式 v4 artifact，也不启动新的 validation 或 test。
 
+### `qasper-real-pilot-tev4-v1` 稳健性结果（2026-07-15）
+
+本次使用 `text-embedding-v4` 与 `qwen3-rerank` 重新采集同一 train Pilot，Embedding/Reranker preflight 各一次通过。采集记录 188 个 embedding batch、100 次 rerank；索引 build 为 28.54s，查询 p50/p95 为 187.5/262.1ms，降级率为 0。未读取 validation 或 test。
+
+7464 组配置通过 Retrieval，39 组通过 100 题全量 proxy，但仍无配置通过全部 5 折 proxy。因此选择器按安全回退规则选中 candidate/evidence `20/4`、BM25 最低分 `0.6177483461`、向量最低相似度 `0.3767446518`、RRF k `60`。全量 Candidate Recall@20 为 97.84%、Recall@6 70.32%、Precision@6 24.33%、MRR 0.530、Coverage 65.33%、Evidence F1 33.86%；MRR 和 Coverage 未通过 proxy。最差折 Candidate Recall@20 为 95.10%、Recall@6 50.51%、Precision@6 21.43%、MRR 0.435、Coverage 42.86%、Evidence F1 31.15%。
+
+正式 Retrieval 门通过，但跨折稳健性门失败，所以 artifact 明确记录 `validation_authorized=true`、`validation_recommended=false`、Embedding `keep_current`。Reranker 与 Refusal 门仍失败，Reranker 保持 `disabled`。tev4 不启动 validation/test，也不切换为默认 Embedding；该 artifact 仅作为失败审计记录。模型轮换实验在此收口，后续优先完成人工复核、Trace/并行对比与端到端演示。
+
 > 项目范围说明：本评估框架保留了生产化所需的严格边界。正式 gold、冻结 test 和生产 reranker 不作为文档检索增强 MVP 的前置条件；离线合成回归、显式降级和端到端演示完整性是当前优先级。
 
 ## Pilot-only 工程准入门
