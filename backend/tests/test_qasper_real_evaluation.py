@@ -20,7 +20,9 @@ from backend.evaluation.qasper_real import (
     _dataset_signature,
     _configuration_fingerprint,
     _rrf_candidates,
+    _select_hybrid_candidate,
     collect_real_rows,
+    render_markdown,
     run_real_pilot,
     run_real_validation,
     select_pilot_cases,
@@ -103,6 +105,88 @@ def _settings(tmp_path: Path) -> AppSettings:
         ask_reranker_timeout=10,
         ask_index_dir=Path("indexes"),
     )
+
+
+def _retrieval_report(
+    *,
+    candidate_recall: float,
+    recall: float,
+    precision: float,
+    evidence_f1: float,
+    mrr: float = 0.60,
+    coverage: float = 0.75,
+) -> dict:
+    return {
+        "metrics": {
+            "candidate_recall_at_20": candidate_recall,
+            "recall_at_6": recall,
+            "precision_at_6": precision,
+            "mrr": mrr,
+            "evidence_coverage": coverage,
+            "evidence_f1": evidence_f1,
+            "degradation_rate": 0.0,
+            "latency_p95_ms": 100.0,
+        }
+    }
+
+
+def test_hybrid_selection_prefers_validation_proxy_within_retrieval_gate():
+    bm25 = _retrieval_report(
+        candidate_recall=0.85, recall=0.70, precision=0.20, evidence_f1=0.30
+    )
+    recall_first = _retrieval_report(
+        candidate_recall=0.99, recall=0.84, precision=0.17, evidence_f1=0.27
+    )
+    validation_ready = _retrieval_report(
+        candidate_recall=0.98, recall=0.78, precision=0.22, evidence_f1=0.32
+    )
+    candidates = [
+        ((0.99, 0.84, 0.17, 0.60), recall_first, {"evidence_count": 6}),
+        ((0.98, 0.78, 0.22, 0.60), validation_ready, {"evidence_count": 4}),
+    ]
+
+    report, configuration, selection = _select_hybrid_candidate(candidates, bm25)
+
+    assert report is validation_ready
+    assert configuration == {"evidence_count": 4}
+    assert selection == {
+        "strategy": "retrieval_gate_then_pilot_validation_proxy",
+        "retrieval_qualified_configuration_count": 2,
+        "validation_proxy_qualified_configuration_count": 1,
+        "selected_configuration_proxy_gate": {
+            "name": "pilot_validation_proxy",
+            "passed": True,
+            "failures": [],
+        },
+    }
+
+
+def test_hybrid_selection_safely_falls_back_when_validation_proxy_is_empty():
+    bm25 = _retrieval_report(
+        candidate_recall=0.85, recall=0.70, precision=0.20, evidence_f1=0.30
+    )
+    recall_first = _retrieval_report(
+        candidate_recall=0.99, recall=0.84, precision=0.17, evidence_f1=0.27
+    )
+    precision_better = _retrieval_report(
+        candidate_recall=0.98, recall=0.78, precision=0.19, evidence_f1=0.29
+    )
+    candidates = [
+        ((0.99, 0.84, 0.17, 0.60), recall_first, {"evidence_count": 6}),
+        ((0.98, 0.78, 0.19, 0.60), precision_better, {"evidence_count": 4}),
+    ]
+
+    report, configuration, selection = _select_hybrid_candidate(candidates, bm25)
+
+    assert report is recall_first
+    assert configuration == {"evidence_count": 6}
+    assert selection["retrieval_qualified_configuration_count"] == 2
+    assert selection["validation_proxy_qualified_configuration_count"] == 0
+    assert selection["selected_configuration_proxy_gate"]["passed"] is False
+    assert {
+        failure.split("=", 1)[0]
+        for failure in selection["selected_configuration_proxy_gate"]["failures"]
+    } == {"precision_at_6", "evidence_f1"}
 
 
 def test_qasper_state_bridge_is_stable_content_addressed_and_has_no_pages(tmp_path):
@@ -257,6 +341,11 @@ def test_real_pilot_collects_once_and_uses_only_offline_grid_replay(tmp_path):
     assert report["quality_gate"]["passed"] is True, report["quality_gate"]
     assert report["validation_authorized"] is True
     assert report["validation_scope"] == "retrieval_only"
+    assert report["hybrid_selection"]["strategy"] == (
+        "retrieval_gate_then_pilot_validation_proxy"
+    )
+    assert report["hybrid_selection"]["retrieval_qualified_configuration_count"] > 0
+    assert "passed" in report["hybrid_selection"]["selected_configuration_proxy_gate"]
     assert report["dataset_paper_count"] == 1
     assert report["evaluated_paper_count"] == 1
     assert set(report["quality_gates"]) == {"retrieval", "reranker", "refusal"}
@@ -270,6 +359,9 @@ def test_real_pilot_collects_once_and_uses_only_offline_grid_replay(tmp_path):
     serialized = output.read_text(encoding="utf-8")
     assert "What does the method combine?" not in serialized
     assert "The method combines lexical" not in serialized
+    markdown = render_markdown(report)
+    assert "Retrieval-qualified / validation-proxy-qualified configurations" in markdown
+    assert "Selected configuration validation proxy" in markdown
 
 
 def test_retrieval_gate_can_authorize_validation_when_reranker_and_refusal_fail(tmp_path):

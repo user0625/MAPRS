@@ -638,21 +638,27 @@ def _gate(name: str, rules: list[tuple[bool, str]]) -> dict[str, Any]:
     return {"name": name, "passed": not failures, "failures": failures}
 
 
+def _retrieval_gate(
+    hybrid: dict[str, Any],
+    bm25: dict[str, Any],
+) -> dict[str, Any]:
+    h, b = hybrid["metrics"], bm25["metrics"]
+    return _gate("retrieval", [
+        (h["candidate_recall_at_20"] >= 0.85, "hybrid candidate_recall_at_20 >= 0.85"),
+        (h["candidate_recall_at_20"] >= b["candidate_recall_at_20"], "hybrid candidate recall >= BM25"),
+        (h["degradation_rate"] <= 0.01, "degradation rate <= 0.01"),
+        (h["latency_p95_ms"] <= 3000, "query p95 <= 3000 ms"),
+    ])
+
+
 def _pilot_gates(
     hybrid: dict[str, Any],
     bm25: dict[str, Any],
     reranked: dict[str, Any],
     best_non_rerank: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    h, b, r, n = (
-        hybrid["metrics"], bm25["metrics"], reranked["metrics"], best_non_rerank["metrics"]
-    )
-    retrieval = _gate("retrieval", [
-        (h["candidate_recall_at_20"] >= 0.85, "hybrid candidate_recall_at_20 >= 0.85"),
-        (h["candidate_recall_at_20"] >= b["candidate_recall_at_20"], "hybrid candidate recall >= BM25"),
-        (h["degradation_rate"] <= 0.01, "degradation rate <= 0.01"),
-        (h["latency_p95_ms"] <= 3000, "query p95 <= 3000 ms"),
-    ])
+    r, n = reranked["metrics"], best_non_rerank["metrics"]
+    retrieval = _retrieval_gate(hybrid, bm25)
     reranker = _gate("reranker", [
         (r["precision_at_6"] - n["precision_at_6"] >= 0.05, "reranker precision uplift >= 0.05"),
         (r["recall_at_6"] - n["recall_at_6"] >= -0.02, "reranker recall delta >= -0.02"),
@@ -680,6 +686,46 @@ def _validation_failures(report: dict[str, Any]) -> list[str]:
         f"{name}={metrics[name]:.4f} (expected {expected})"
         for name, (passed, expected) in rules.items() if not passed
     ]
+
+
+def _validation_proxy_gate(report: dict[str, Any]) -> dict[str, Any]:
+    failures = _validation_failures(report)
+    return {
+        "name": "pilot_validation_proxy",
+        "passed": not failures,
+        "failures": failures,
+    }
+
+
+HybridCandidate = tuple[tuple[float, ...], dict[str, Any], dict[str, Any]]
+
+
+def _select_hybrid_candidate(
+    candidates: list[HybridCandidate],
+    bm25: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Prefer validation-ready metrics without weakening the Pilot retrieval gate."""
+    if not candidates:
+        raise ValueError("pilot produced no Hybrid configurations")
+    retrieval_qualified = [
+        item for item in candidates if _retrieval_gate(item[1], bm25)["passed"]
+    ]
+    validation_proxy_qualified = [
+        item for item in retrieval_qualified if _validation_proxy_gate(item[1])["passed"]
+    ]
+    selection_pool = validation_proxy_qualified or retrieval_qualified or candidates
+    _, selected_report, selected_configuration = max(
+        selection_pool, key=lambda item: item[0]
+    )
+    selection = {
+        "strategy": "retrieval_gate_then_pilot_validation_proxy",
+        "retrieval_qualified_configuration_count": len(retrieval_qualified),
+        "validation_proxy_qualified_configuration_count": len(
+            validation_proxy_qualified
+        ),
+        "selected_configuration_proxy_gate": _validation_proxy_gate(selected_report),
+    }
+    return selected_report, selected_configuration, selection
 
 
 def _public_configuration(settings: AppSettings, selected: dict[str, Any]) -> dict[str, Any]:
@@ -850,7 +896,7 @@ def run_real_pilot(
     bm25_thresholds = _observed_boundaries((0.0, 0.5, 1.0, 2.0, 4.0, 8.0), bm25_values)
     vector_thresholds = _observed_boundaries((0.0, 0.1, 0.2, 0.3, 0.4, 0.5), vector_values)
     bm25_candidates: list[tuple[tuple[float, ...], dict[str, Any], dict[str, Any]]] = []
-    hybrid_candidates: list[tuple[tuple[float, ...], dict[str, Any], dict[str, Any]]] = []
+    hybrid_candidates: list[HybridCandidate] = []
     for candidate_count in PILOT_CANDIDATE_COUNTS:
         for evidence_count in PILOT_EVIDENCE_COUNTS:
             for bm25_threshold in bm25_thresholds:
@@ -878,7 +924,9 @@ def run_real_pilot(
                         metric["precision_at_6"], metric["mrr"],
                     ), hybrid, {**common, "vector_min_similarity": vector_threshold}))
     _, best_bm25, bm25_config = max(bm25_candidates, key=lambda item: item[0])
-    _, best_hybrid, retrieval_config = max(hybrid_candidates, key=lambda item: item[0])
+    best_hybrid, retrieval_config, hybrid_selection = _select_hybrid_candidate(
+        hybrid_candidates, best_bm25
+    )
     reranker_values = [
         float(item["reranker_score"]) for row in rows for item in row.candidate_scores
         if isinstance(item.get("reranker_score"), (int, float))
@@ -985,6 +1033,7 @@ def run_real_pilot(
             "rerank_requests": RERANK_REQUEST_LIMIT,
         },
         "bm25_configuration": bm25_config,
+        "hybrid_selection": hybrid_selection,
         "reranker_diagnostics": {
             "evaluated_configuration_count": len(reranked_candidates),
             "feasible_configuration_count": len(feasible),
@@ -1162,6 +1211,7 @@ def run_real_validation(
 
 def render_markdown(report: dict[str, Any]) -> str:
     gate = report.get("quality_gate") or {}
+    hybrid_selection = report.get("hybrid_selection") or {}
     lines = [
         "# QASPER real retrieval benchmark", "",
         f"- Level / split: `{report['run_level']}` / `{report['split']}`",
@@ -1171,6 +1221,18 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Quality gate: `{'passed' if gate.get('passed') else 'failed'}`",
         f"- Validation authorization: `{report.get('validation_scope') or 'none'}`",
         f"- Production recommendation: embedding `{report['production_recommendation']['embedding']}`, reranker `{report['production_recommendation']['reranker']}`",
+    ]
+    if hybrid_selection:
+        selected_proxy = hybrid_selection.get("selected_configuration_proxy_gate") or {}
+        lines += [
+            f"- Hybrid selection: `{hybrid_selection.get('strategy')}`",
+            f"- Retrieval-qualified / validation-proxy-qualified configurations: "
+            f"{hybrid_selection.get('retrieval_qualified_configuration_count', 0)} / "
+            f"{hybrid_selection.get('validation_proxy_qualified_configuration_count', 0)}",
+            f"- Selected configuration validation proxy: "
+            f"`{'passed' if selected_proxy.get('passed') else 'failed'}`",
+        ]
+    lines += [
         "", "| Scenario | Cand. R@20 | R@6 | P@6 | MRR | Coverage | Evidence F1 | Refusal | False refusal | p95 ms |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
